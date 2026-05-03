@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Human Verification Shield Demo</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: white;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .demo-section {
+            margin: 30px 0;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+
+        .demo-button {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin: 10px;
+            box-shadow: 0 4px 15px rgba(52, 152, 219, 0.3);
+        }
+
+        .demo-button:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(52, 152, 219, 0.4);
+        }
+
+        .demo-button.dark {
+            background: #2c3e50;
+            box-shadow: 0 4px 15px rgba(44, 62, 80, 0.3);
+        }
+
+        .demo-button.dark:hover {
+            background: #34495e;
+            box-shadow: 0 6px 20px rgba(44, 62, 80, 0.4);
+        }
+
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            border-left: 4px solid #3498db;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #3498db;
+        }
+
+        .stat-label {
+            margin-top: 5px;
+            opacity: 0.8;
+        }
+
+        .code-block {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            margin: 20px 0;
+            overflow-x: auto;
+        }
+
+        .feature-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .feature-list li {
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .feature-list li:before {
+            content: "✓ ";
+            color: #2ecc71;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🛡️ Human Verification Shield</h1>
+        
+        <div class="demo-section">
+            <h2>Try the Verification Widget</h2>
+            <p>Click the buttons below to test different verification modes:</p>
+            
+            <button class="demo-button" onclick="startVerification('light')">
+                Light Theme
+            </button>
+            
+            <button class="demo-button dark" onclick="startVerification('dark')">
+                Dark Theme
+            </button>
+            
+            <div id="result" class="result" style="display: none;"></div>
+        </div>
+
+        <div class="demo-section">
+            <h2>🚀 Features</h2>
+            <ul class="feature-list">
+                <li>Dynamic math challenges (arithmetic, algebra, logic, sequences)</li>
+                <li>Behavioral analysis (mouse tracking, typing patterns)</li>
+                <li>Risk scoring engine with IP reputation</li>
+                <li>Adaptive difficulty based on risk assessment</li>
+                <li>Intelligence scoring and confidence metrics</li>
+                <li>Multiple themes and customizable appearance</li>
+                <li>Drop-in integration with simple JavaScript</li>
+                <li>Real-time analytics and attack pattern detection</li>
+            </ul>
+        </div>
+
+        <div class="demo-section">
+            <h2>📊 Live Statistics</h2>
+            <div class="stats" id="stats">
+                <div class="stat-card">
+                    <div class="stat-number" id="total-verifications">0</div>
+                    <div class="stat-label">Total Verifications</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="success-rate">0%</div>
+                    <div class="stat-label">Success Rate</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="avg-time">0s</div>
+                    <div class="stat-label">Avg. Solve Time</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="bot-traffic">0%</div>
+                    <div class="stat-label">Bot Traffic</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="demo-section">
+            <h2>🔧 Integration</h2>
+            <p>Integrate with just a few lines of code:</p>
+            <div class="code-block">
+&lt;script src="shield.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+  const shield = new HumanShield({
+    apiKey: 'your-api-key',
+    theme: 'light',
+    onVerified: (result) => {
+      console.log('Verified!', result);
+    }
+  });
+  
+  shield.init();
+  shield.start();
+&lt;/script&gt;
+            </div>
+        </div>
+    </div>
+
+    <script src="shield.js"></script>
+    <script>
+        let verificationCount = 0;
+        let successCount = 0;
+        let totalTime = 0;
+
+        function startVerification(theme) {
+            const shield = new HumanShield({
+                apiKey: 'demo-key',
+                theme: theme,
+                onVerified: (result) => {
+                    verificationCount++;
+                    if (result.success) {
+                        successCount++;
+                    }
+                    totalTime += (Date.now() - startTime) / 1000;
+                    
+                    updateStats();
+                    showResult(result);
+                },
+                onError: (error) => {
+                    showResult({ success: false, error: error.message });
+                }
+            });
+            
+            shield.init();
+            const startTime = Date.now();
+            shield.start();
+        }
+
+        function showResult(result) {
+            const resultEl = document.getElementById('result');
+            if (result.success) {
+                resultEl.innerHTML = `
+                    <h3>✅ Verification Successful!</h3>
+                    <p>Confidence: ${result.confidence}%</p>
+                    <p>Intelligence Score: ${result.intelligenceScore}</p>
+                    <p>Risk Level: ${result.riskLevel}</p>
+                `;
+                resultEl.style.borderLeftColor = '#2ecc71';
+            } else {
+                resultEl.innerHTML = `
+                    <h3>❌ Verification Failed</h3>
+                    <p>${result.error || 'Please try again'}</p>
+                `;
+                resultEl.style.borderLeftColor = '#e74c3c';
+            }
+            resultEl.style.display = 'block';
+        }
+
+        function updateStats() {
+            document.getElementById('total-verifications').textContent = verificationCount;
+            document.getElementById('success-rate').textContent = 
+                verificationCount > 0 ? Math.round((successCount / verificationCount) * 100) + '%' : '0%';
+            document.getElementById('avg-time').textContent = 
+                verificationCount > 0 ? Math.round(totalTime / verificationCount) + 's' : '0s';
+            
+            // Simulate bot traffic (would come from real analytics)
+            const botTraffic = Math.max(0, 15 - verificationCount * 2);
+            document.getElementById('bot-traffic').textContent = botTraffic + '%';
+        }
+
+        // Load initial stats from API
+        async function loadStats() {
+            try {
+                const response = await fetch('http://localhost:3000/api/analytics');
+                const stats = await response.json();
+                
+                document.getElementById('total-verifications').textContent = stats.totalVerifications;
+                document.getElementById('success-rate').textContent = stats.successRate + '%';
+                document.getElementById('avg-time').textContent = Math.round(stats.averageSolveTime / 1000) + 's';
+                document.getElementById('bot-traffic').textContent = stats.botTrafficPercentage + '%';
+            } catch (error) {
+                console.log('Stats not available yet');
+            }
+        }
+
+        // Load stats on page load
+        loadStats();
+    </script>
+</body>
+</html>
