@@ -23,120 +23,116 @@ export interface RiskScore {
   reasoning: string[];
 }
 
+interface RequestWindow {
+  timestamps: number[]; // rolling list of request timestamps
+  lastRequest: number;
+}
+
 @Injectable()
 export class RiskService {
   private ipReputationCache = new Map<string, number>();
-  private requestTracker = new Map<string, { count: number; lastRequest: number }>();
+  private requestWindows = new Map<string, RequestWindow>();
+
+  // --- Public API ---
 
   calculateRiskScore(factors: RiskFactors): RiskScore {
     const scores = {
-      ip: this.calculateIpRisk(factors.ip),
+      ip:        this.calculateIpRisk(factors.ip),
       frequency: this.calculateFrequencyRisk(factors.ip),
-      behavior: this.calculateBehaviorRisk(factors.behaviorScore),
-      history: this.calculateHistoryRisk(factors.pastSuccessRate),
-      device: this.calculateDeviceRisk(factors.userAgent, factors.deviceFingerprint),
+      behavior:  this.calculateBehaviorRisk(factors.behaviorScore),
+      history:   this.calculateHistoryRisk(factors.pastSuccessRate),
+      device:    this.calculateDeviceRisk(factors.userAgent, factors.deviceFingerprint),
     };
 
+    // Weighted composite: IP 25 | Frequency 25 | Behavior 20 | History 15 | Device 15
     const totalScore = Math.round(
-      scores.ip * 0.25 +
+      scores.ip        * 0.25 +
       scores.frequency * 0.25 +
-      scores.behavior * 0.20 +
-      scores.history * 0.15 +
-      scores.device * 0.15
+      scores.behavior  * 0.20 +
+      scores.history   * 0.15 +
+      scores.device    * 0.15,
     );
 
-    const reasoning = this.generateReasoning(scores, factors);
-
     return {
-      score: Math.min(100, Math.max(0, totalScore)),
-      level: this.getRiskLevel(totalScore),
+      score:   Math.min(100, Math.max(0, totalScore)),
+      level:   this.getRiskLevel(totalScore),
       factors: scores,
-      reasoning,
+      reasoning: this.generateReasoning(scores, factors),
     };
   }
 
+  /** Record one request for the given IP using a 60-second sliding window. */
   trackRequest(ip: string): void {
     const now = Date.now();
-    const tracker = this.requestTracker.get(ip);
-    
-    if (tracker) {
-      tracker.count++;
-      tracker.lastRequest = now;
-    } else {
-      this.requestTracker.set(ip, { count: 1, lastRequest: now });
+    const WINDOW_MS = 60_000;
+
+    let window = this.requestWindows.get(ip);
+    if (!window) {
+      window = { timestamps: [], lastRequest: now };
+      this.requestWindows.set(ip, window);
     }
 
-    // Clean up old entries (older than 1 hour)
-    this.cleanupOldRequests(now - 3600000);
+    // Keep only timestamps within the sliding window
+    window.timestamps = window.timestamps.filter(ts => now - ts < WINDOW_MS);
+    window.timestamps.push(now);
+    window.lastRequest = now;
+
+    // Periodic cleanup of stale entries (older than 1 hour)
+    if (Math.random() < 0.01) {
+      this.cleanupStaleWindows(now - 3_600_000);
+    }
   }
 
+  /** Returns how many requests the given IP made in the last `windowMs` ms. */
+  getRequestCount(ip: string, windowMs = 60_000): number {
+    const now = Date.now();
+    const window = this.requestWindows.get(ip);
+    if (!window) return 0;
+    return window.timestamps.filter(ts => now - ts < windowMs).length;
+  }
+
+  // --- Private helpers ---
+
   private calculateIpRisk(ip?: string): number {
-    if (!ip) return 50; // Unknown IP = medium risk
+    if (!ip) return 50;
 
-    // Check if IP is in cache
-    if (this.ipReputationCache.has(ip)) {
-      return this.ipReputationCache.get(ip)!;
-    }
+    // Normalise IPv6-mapped IPv4 (::ffff:192.168.1.1 → 192.168.1.1)
+    const normalised = this.normaliseIp(ip);
 
-    // Simple heuristics for IP reputation
-    let risk = 0;
-
-    // Private IP ranges = lower risk
-    if (this.isPrivateIp(ip)) {
-      risk = 10;
-    }
-    // Known data centers = higher risk
-    else if (this.isDataCenterIp(ip)) {
-      risk = 80;
-    }
-    // Tor exit nodes = very high risk
-    else if (this.isTorExitNode(ip)) {
-      risk = 95;
-    }
-    // Public IP = medium risk
-    else {
-      risk = 30;
+    if (this.ipReputationCache.has(normalised)) {
+      return this.ipReputationCache.get(normalised)!;
     }
 
-    this.ipReputationCache.set(ip, risk);
+    let risk: number;
+    if (this.isPrivateIp(normalised))    { risk = 10; }
+    else if (this.isTorExitNode(normalised))    { risk = 95; }  // check Tor before datacenter
+    else if (this.isDataCenterIp(normalised))   { risk = 80; }
+    else                                         { risk = 30; }
+
+    this.ipReputationCache.set(normalised, risk);
     return risk;
   }
 
   private calculateFrequencyRisk(ip?: string): number {
     if (!ip) return 50;
 
-    const tracker = this.requestTracker.get(ip);
-    if (!tracker) return 0;
+    const per60s  = this.getRequestCount(ip, 60_000);
+    const per300s = this.getRequestCount(ip, 300_000);
 
-    const now = Date.now();
-    const timeSinceLastRequest = now - tracker.lastRequest;
-    
-    // Very frequent requests = high risk
-    if (tracker.count > 10 && timeSinceLastRequest < 60000) { // >10 requests in last minute
-      return 90;
-    }
-    // Moderately frequent = medium risk
-    else if (tracker.count > 5 && timeSinceLastRequest < 300000) { // >5 requests in last 5 minutes
-      return 60;
-    }
-    // Normal frequency = low risk
-    else {
-      return 10;
-    }
+    if (per60s > 10)  return 90; // >10 requests in 1 min
+    if (per300s > 20) return 70; // >20 requests in 5 min
+    if (per300s > 10) return 45; // >10 requests in 5 min
+    return 10;
   }
 
   private calculateBehaviorRisk(behaviorScore?: number): number {
-    if (!behaviorScore) return 50; // Unknown behavior = medium risk
-    
-    // Behavior score should be 0-100 (100 = very human-like)
-    // Convert to risk score (inverse)
-    return Math.max(0, 100 - behaviorScore);
+    if (behaviorScore === undefined || behaviorScore === null) return 50;
+    // behaviorScore: 0-100 where 100 = very human-like → invert to risk
+    return Math.max(0, Math.min(100, 100 - behaviorScore));
   }
 
   private calculateHistoryRisk(pastSuccessRate?: number): number {
-    if (!pastSuccessRate) return 30; // Unknown history = low-medium risk
-    
-    // High success rate = lower risk
+    if (pastSuccessRate === undefined || pastSuccessRate === null) return 30;
     if (pastSuccessRate > 0.8) return 10;
     if (pastSuccessRate > 0.6) return 30;
     if (pastSuccessRate > 0.4) return 50;
@@ -147,24 +143,13 @@ export class RiskService {
   private calculateDeviceRisk(userAgent?: string, fingerprint?: string): number {
     let risk = 0;
 
-    // Check user agent
-    if (userAgent) {
-      // Suspicious user agents
-      if (this.isSuspiciousUserAgent(userAgent)) {
-        risk += 40;
-      }
-      // Missing user agent
-      else if (userAgent.length < 10) {
-        risk += 20;
-      }
-    } else {
-      risk += 30;
+    if (!userAgent || userAgent.trim().length < 10) {
+      risk += 30; // missing / stub UA
+    } else if (this.isSuspiciousUserAgent(userAgent)) {
+      risk += 40;
     }
 
-    // Check device fingerprint
-    if (!fingerprint) {
-      risk += 20;
-    }
+    if (!fingerprint) risk += 20;
 
     return Math.min(100, risk);
   }
@@ -175,91 +160,78 @@ export class RiskService {
     return 'high';
   }
 
-  private generateReasoning(scores: any, factors: RiskFactors): string[] {
-    const reasoning: string[] = [];
+  private generateReasoning(scores: RiskScore['factors'], _factors: RiskFactors): string[] {
+    const out: string[] = [];
 
-    if (scores.ip > 70) {
-      reasoning.push('High-risk IP address detected');
-    } else if (scores.ip > 40) {
-      reasoning.push('Unusual IP address pattern');
-    }
+    if (scores.ip > 70)        out.push('High-risk IP address detected');
+    else if (scores.ip > 40)   out.push('Unusual IP address pattern');
 
-    if (scores.frequency > 70) {
-      reasoning.push('Unusually high request frequency');
-    } else if (scores.frequency > 40) {
-      reasoning.push('Elevated request frequency');
-    }
+    if (scores.frequency > 70)       out.push('Unusually high request frequency');
+    else if (scores.frequency > 40)  out.push('Elevated request frequency');
 
-    if (scores.behavior > 70) {
-      reasoning.push('Bot-like behavior detected');
-    } else if (scores.behavior > 40) {
-      reasoning.push('Suspicious behavior patterns');
-    }
+    if (scores.behavior > 70)        out.push('Bot-like behavior detected');
+    else if (scores.behavior > 40)   out.push('Suspicious behavior patterns');
 
-    if (scores.history > 70) {
-      reasoning.push('Poor verification history');
-    }
+    if (scores.history > 70)   out.push('Poor verification history');
+    if (scores.device > 60)    out.push('Suspicious device characteristics');
 
-    if (scores.device > 60) {
-      reasoning.push('Suspicious device characteristics');
-    }
+    if (out.length === 0) out.push('Normal activity patterns');
+    return out;
+  }
 
-    if (reasoning.length === 0) {
-      reasoning.push('Normal activity patterns');
-    }
+  // --- IP classification helpers ---
 
-    return reasoning;
+  private normaliseIp(ip: string): string {
+    // Strip IPv6-mapped IPv4 prefix
+    if (ip.startsWith('::ffff:')) return ip.slice(7);
+    return ip;
   }
 
   private isPrivateIp(ip: string): boolean {
-    // Simple check for private IP ranges
     const privateRanges = [
       /^10\./,
       /^172\.(1[6-9]|2[0-9]|3[0-1])\./,
       /^192\.168\./,
       /^127\./,
-      /^localhost$/,
+      /^::1$/,         // IPv6 loopback
+      /^fc00:/i,       // IPv6 ULA
+      /^fd[0-9a-f]{2}:/i,
+      /^localhost$/i,
     ];
-    
-    return privateRanges.some(range => range.test(ip));
+    return privateRanges.some(r => r.test(ip));
   }
 
   private isDataCenterIp(ip: string): boolean {
-    // Simplified check - in production, use a real IP intelligence service
-    const dataCenterRanges = [
-      /^208\.67\./, // OpenDNS
-      /^8\.8\.8\./, // Google DNS
-      /^1\.1\.1\./, // Cloudflare DNS
+    // Known datacenter/resolver ranges — extend with a real IP-intelligence DB in production
+    const ranges = [
+      /^208\.67\./,  // OpenDNS
+      /^8\.8\./,     // Google Public DNS
+      /^1\.1\.1\./,  // Cloudflare DNS
+      /^1\.0\.0\./,  // Cloudflare DNS alt
     ];
-    
-    return dataCenterRanges.some(range => range.test(ip));
+    return ranges.some(r => r.test(ip));
   }
 
-  private isTorExitNode(ip: string): boolean {
-    // Simplified check - in production, use a real Tor exit node list
+  private isTorExitNode(_ip: string): boolean {
+    // TODO: integrate a live Tor-exit-node list (e.g. dan.me.uk/torlist)
     return false;
   }
 
-  private isSuspiciousUserAgent(userAgent: string): boolean {
-    const suspiciousPatterns = [
-      /bot/i,
-      /crawler/i,
-      /spider/i,
-      /scraper/i,
-      /curl/i,
-      /wget/i,
-      /python/i,
-      /java/i,
-      /go-http/i,
+  private isSuspiciousUserAgent(ua: string): boolean {
+    const patterns = [
+      /\bbot\b/i, /\bcrawler\b/i, /\bspider\b/i, /\bscraper\b/i,
+      /\bcurl\b/i, /\bwget\b/i, /\bpython[-\/]/i,
+      /java\/[\d.]+/i, /go-http-client/i, /axios\/[\d.]+/i,
+      /node-fetch/i, /node\.js/i, /php\/[\d.]+/i,
+      /libwww-perl/i, /Scrapy/i, /headless/i,
     ];
-
-    return suspiciousPatterns.some(pattern => pattern.test(userAgent));
+    return patterns.some(p => p.test(ua));
   }
 
-  private cleanupOldRequests(cutoffTime: number): void {
-    for (const [ip, tracker] of this.requestTracker.entries()) {
-      if (tracker.lastRequest < cutoffTime) {
-        this.requestTracker.delete(ip);
+  private cleanupStaleWindows(cutoffTime: number): void {
+    for (const [ip, window] of this.requestWindows.entries()) {
+      if (window.lastRequest < cutoffTime) {
+        this.requestWindows.delete(ip);
       }
     }
   }
