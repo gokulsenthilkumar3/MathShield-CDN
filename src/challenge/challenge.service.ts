@@ -20,18 +20,28 @@ export interface Challenge {
   answer: string | number;
   difficulty: 'easy' | 'medium' | 'hard';
   options?: string[];
-  timeLimit: number; // in seconds
+  timeLimit: number; // seconds
   points: number;
-  signature?: string; // HMAC signature for integrity
-  explanation?: string; // Educational explanation
+  signature?: string; // HMAC integrity
+  explanation?: string;
 }
 
 export interface ChallengeRequest {
   difficulty?: 'easy' | 'medium' | 'hard';
   type?: 'arithmetic' | 'algebra' | 'logic' | 'sequence' | AIResistantChallengeType | 'ai-resistant';
   riskScore?: number;
-  useAIResistant?: boolean; // Flag to prefer AI-resistant challenges
+  useAIResistant?: boolean;
 }
+
+// All AI-resistant types in one constant
+const AI_RESISTANT_TYPES: AIResistantChallengeType[] = [
+  'pattern', 'spatial', 'semantic', 'analogy', 'completion',
+];
+
+const ALL_TYPES: ChallengeRequest['type'][] = [
+  'arithmetic', 'algebra', 'logic', 'sequence',
+  ...AI_RESISTANT_TYPES,
+];
 
 @Injectable()
 export class ChallengeService {
@@ -41,297 +51,316 @@ export class ChallengeService {
   ) {}
 
   async generateChallenge(request: ChallengeRequest = {}): Promise<Challenge> {
-    const {
-      difficulty = this.getDifficultyByRisk(request.riskScore),
-      type = request.useAIResistant ? 'ai-resistant' : (request.type || this.getRandomType()),
-      useAIResistant = false,
-    } = request;
+    const riskScore = request.riskScore ?? 0;
+    const difficulty = request.difficulty ?? this.getDifficultyByRisk(riskScore);
 
-    // For high risk scores, prefer AI-resistant challenges
-    const preferAIResistant = request.riskScore && request.riskScore > 50;
-    const finalUseAIResistant = useAIResistant || preferAIResistant;
+    // High-risk sessions always get AI-resistant challenges
+    const forceAIResistant = riskScore > 50 || request.useAIResistant === true;
+    const rawType = request.type ?? (forceAIResistant ? 'ai-resistant' : this.pickRandomType());
 
-    const challenge = this.createChallengeByType(type, difficulty, finalUseAIResistant);
-    
-    // Cache challenge for 10 minutes (600 seconds)
-    await this.cacheManager.set(`challenge:${challenge.id}`, challenge, 600000);
-    
+    const challenge = this.buildChallenge(rawType, difficulty, forceAIResistant);
+
+    // Cache for 10 minutes
+    await this.cacheManager.set(`challenge:${challenge.id}`, challenge, 600_000);
     return challenge;
   }
 
   async getChallengeById(id: string): Promise<Challenge | null> {
-    return await this.cacheManager.get<Challenge>(`challenge:${id}`);
+    return this.cacheManager.get<Challenge>(`challenge:${id}`);
   }
 
-  async removeChallenge(id: string): Promise<boolean> {
+  async removeChallenge(id: string): Promise<void> {
     await this.cacheManager.del(`challenge:${id}`);
-    return true;
   }
 
-  private getDifficultyByRisk(riskScore?: number): 'easy' | 'medium' | 'hard' {
-    if (!riskScore) return 'easy';
+  // ---------------------------------------------------------------------------
+  // Difficulty
+  // ---------------------------------------------------------------------------
+
+  private getDifficultyByRisk(riskScore: number): 'easy' | 'medium' | 'hard' {
     if (riskScore < 30) return 'easy';
     if (riskScore < 70) return 'medium';
     return 'hard';
   }
 
-  private getRandomType(): 'arithmetic' | 'algebra' | 'logic' | 'sequence' | AIResistantChallengeType {
-    const types: ('arithmetic' | 'algebra' | 'logic' | 'sequence' | AIResistantChallengeType)[] = [
-      'arithmetic', 'algebra', 'logic', 'sequence',
-      'pattern', 'spatial', 'semantic', 'analogy', 'completion'
-    ];
-    return types[Math.floor(Math.random() * types.length)];
+  // ---------------------------------------------------------------------------
+  // Type selection
+  // ---------------------------------------------------------------------------
+
+  private pickRandomType(): ChallengeRequest['type'] {
+    return ALL_TYPES[Math.floor(Math.random() * ALL_TYPES.length)];
   }
 
-  private createChallengeByType(
-    type: 'arithmetic' | 'algebra' | 'logic' | 'sequence' | AIResistantChallengeType | 'ai-resistant',
+  // ---------------------------------------------------------------------------
+  // Challenge builder
+  // ---------------------------------------------------------------------------
+
+  private buildChallenge(
+    type: ChallengeRequest['type'],
     difficulty: 'easy' | 'medium' | 'hard',
-    useAIResistant?: boolean
+    useAIResistant: boolean,
   ): Challenge {
-    // If AI-resistant is requested, pick a random AI-resistant type
+    // Resolve 'ai-resistant' meta-type to a concrete type
     if (type === 'ai-resistant' || useAIResistant) {
-      const aiTypes: AIResistantChallengeType[] = ['pattern', 'spatial', 'semantic', 'analogy', 'completion'];
-      type = aiTypes[Math.floor(Math.random() * aiTypes.length)];
+      type = AI_RESISTANT_TYPES[Math.floor(Math.random() * AI_RESISTANT_TYPES.length)];
     }
 
     let challenge: Challenge;
-    
+
     switch (type) {
-      case 'arithmetic':
-        challenge = this.createArithmeticChallenge(uuidv4(), difficulty);
-        break;
-      case 'algebra':
-        challenge = this.createAlgebraChallenge(uuidv4(), difficulty);
-        break;
-      case 'logic':
-        challenge = this.createLogicChallenge(uuidv4(), difficulty);
-        break;
-      case 'sequence':
-        challenge = this.createSequenceChallenge(uuidv4(), difficulty);
-        break;
-      case 'pattern':
-        challenge = this.convertAIResistantToChallenge(generatePatternChallenge(difficulty));
-        break;
-      case 'spatial':
-        challenge = this.convertAIResistantToChallenge(generateSpatialChallenge(difficulty));
-        break;
-      case 'semantic':
-        challenge = this.convertAIResistantToChallenge(generateSemanticChallenge(difficulty));
-        break;
-      case 'analogy':
-        challenge = this.convertAIResistantToChallenge(generateAnalogyChallenge(difficulty));
-        break;
-      case 'completion':
-        challenge = this.convertAIResistantToChallenge(generateCompletionChallenge(difficulty));
-        break;
-      default:
-        challenge = this.createArithmeticChallenge(uuidv4(), difficulty);
+      case 'arithmetic': challenge = this.createArithmetic(uuidv4(), difficulty); break;
+      case 'algebra':    challenge = this.createAlgebra(uuidv4(), difficulty);    break;
+      case 'logic':      challenge = this.createLogic(uuidv4(), difficulty);      break;
+      case 'sequence':   challenge = this.createSequence(uuidv4(), difficulty);   break;
+      case 'pattern':    challenge = this.fromAI(generatePatternChallenge(difficulty));    break;
+      case 'spatial':    challenge = this.fromAI(generateSpatialChallenge(difficulty));    break;
+      case 'semantic':   challenge = this.fromAI(generateSemanticChallenge(difficulty));   break;
+      case 'analogy':    challenge = this.fromAI(generateAnalogyChallenge(difficulty));    break;
+      case 'completion': challenge = this.fromAI(generateCompletionChallenge(difficulty)); break;
+      default:           challenge = this.createArithmetic(uuidv4(), difficulty);
     }
 
-    // Add HMAC signature to prevent tampering
     challenge.signature = this.tokenService.createChallengeSignature(
       challenge.id,
       challenge.type,
-      challenge.difficulty
+      challenge.difficulty,
     );
 
     return challenge;
   }
 
-  private convertAIResistantToChallenge(aiChallenge: AIResistantChallenge): Challenge {
+  // ---------------------------------------------------------------------------
+  // AI-resistant adapter
+  // ---------------------------------------------------------------------------
+
+  private fromAI(ai: AIResistantChallenge): Challenge {
     return {
-      id: aiChallenge.id,
-      type: aiChallenge.type,
-      question: aiChallenge.question,
-      answer: aiChallenge.answer,
-      difficulty: aiChallenge.difficulty,
-      options: aiChallenge.options,
-      timeLimit: aiChallenge.timeLimit,
-      points: aiChallenge.points,
-      explanation: aiChallenge.explanation,
+      id:          ai.id,
+      type:        ai.type,
+      question:    ai.question,
+      answer:      ai.answer,
+      difficulty:  ai.difficulty,
+      options:     ai.options,
+      timeLimit:   ai.timeLimit,
+      points:      ai.points,
+      explanation: ai.explanation,
     };
   }
 
-  private createArithmeticChallenge(id: string, difficulty: 'easy' | 'medium' | 'hard'): Challenge {
+  // ---------------------------------------------------------------------------
+  // Arithmetic
+  // ---------------------------------------------------------------------------
+
+  private createArithmetic(id: string, difficulty: 'easy' | 'medium' | 'hard'): Challenge {
     let question: string;
     let answer: number;
     let options: string[] | undefined;
 
     switch (difficulty) {
-      case 'easy':
-        const a = Math.floor(Math.random() * 10) + 1;
-        const b = Math.floor(Math.random() * 10) + 1;
+      case 'easy': {
+        const a = rand(1, 10), b = rand(1, 10);
         question = `${a} + ${b} = ?`;
         answer = a + b;
         break;
-      
-      case 'medium':
-        const c = Math.floor(Math.random() * 20) + 10;
-        const d = Math.floor(Math.random() * 15) + 5;
-        question = `${c} - ${d} = ?`;
-        answer = c - d;
+      }
+      case 'medium': {
+        const a = rand(10, 30), b = rand(5, 20);
+        // Ensure positive result
+        const [big, small] = a >= b ? [a, b] : [b, a];
+        question = `${big} - ${small} = ?`;
+        answer = big - small;
         break;
-      
-      case 'hard':
-        const e = Math.floor(Math.random() * 12) + 2;
-        const f = Math.floor(Math.random() * 12) + 2;
-        question = `${e} × ${f} = ?`;
-        answer = e * f;
+      }
+      case 'hard': {
+        const a = rand(2, 12), b = rand(2, 12);
+        question = `${a} × ${b} = ?`;
+        answer = a * b;
         break;
-    }
-
-    // Generate multiple choice options for easy and medium
-    if (difficulty !== 'hard') {
-      options = this.generateMultipleChoice(answer, difficulty);
-    }
-
-    return {
-      id,
-      type: 'arithmetic',
-      question,
-      answer,
-      difficulty,
-      options,
-      timeLimit: difficulty === 'easy' ? 30 : difficulty === 'medium' ? 45 : 60,
-      points: difficulty === 'easy' ? 1 : difficulty === 'medium' ? 3 : 5,
-    };
-  }
-
-  private createAlgebraChallenge(id: string, difficulty: 'easy' | 'medium' | 'hard'): Challenge {
-    let question: string;
-    let answer: number;
-
-    switch (difficulty) {
-      case 'easy':
-        const a1 = Math.floor(Math.random() * 10) + 1;
-        const b1 = Math.floor(Math.random() * 20) + 1;
-        question = `x + ${a1} = ${b1}. What is x?`;
-        answer = b1 - a1;
-        break;
-      
-      case 'medium':
-        const a2 = Math.floor(Math.random() * 5) + 2;
-        const b2 = Math.floor(Math.random() * 30) + 10;
-        question = `${a2}x = ${b2}. What is x?`;
-        answer = b2 / a2;
-        break;
-      
-      case 'hard':
-        const a3 = Math.floor(Math.random() * 5) + 2;
-        const b3 = Math.floor(Math.random() * 20) + 5;
-        const c3 = Math.floor(Math.random() * 30) + 10;
-        question = `${a3}x + ${b3} = ${c3}. What is x?`;
-        answer = (c3 - b3) / a3;
-        break;
-    }
-
-    return {
-      id,
-      type: 'algebra',
-      question,
-      answer,
-      difficulty,
-      timeLimit: difficulty === 'easy' ? 45 : difficulty === 'medium' ? 60 : 90,
-      points: difficulty === 'easy' ? 2 : difficulty === 'medium' ? 4 : 6,
-    };
-  }
-
-  private createLogicChallenge(id: string, difficulty: 'easy' | 'medium' | 'hard'): Challenge {
-    let question: string;
-    let answer: string;
-
-    switch (difficulty) {
-      case 'easy':
-        const easyLogic = [
-          { q: "If all cats are animals and some animals are pets, are all cats pets?", a: "no" },
-          { q: "If today is Tuesday, what day will it be in 3 days?", a: "friday" },
-          { q: "If you have 5 apples and give away 2, how many do you have left?", a: "3" },
-        ];
-        const selectedEasy = easyLogic[Math.floor(Math.random() * easyLogic.length)];
-        question = selectedEasy.q;
-        answer = selectedEasy.a;
-        break;
-      
-      case 'medium':
-        const mediumLogic = [
-          { q: "A bat and a ball cost $1.10. The bat costs $1 more than the ball. How much does the ball cost?", a: "0.05" },
-          { q: "If it takes 5 machines 5 minutes to make 5 widgets, how long would it take 100 machines to make 100 widgets?", a: "5" },
-        ];
-        const selectedMedium = mediumLogic[Math.floor(Math.random() * mediumLogic.length)];
-        question = selectedMedium.q;
-        answer = selectedMedium.a;
-        break;
-      
-      case 'hard':
-        const hardLogic = [
-          { q: "You are in a race and pass the person in second place. What place are you in now?", a: "second" },
-          { q: "A man looks at a portrait and says 'Brothers and sisters I have none, but that man's father is my father's son.' Who is in the portrait?", a: "son" },
-        ];
-        const selectedHard = hardLogic[Math.floor(Math.random() * hardLogic.length)];
-        question = selectedHard.q;
-        answer = selectedHard.a;
-        break;
-    }
-
-    return {
-      id,
-      type: 'logic',
-      question,
-      answer,
-      difficulty,
-      timeLimit: difficulty === 'easy' ? 60 : difficulty === 'medium' ? 90 : 120,
-      points: difficulty === 'easy' ? 3 : difficulty === 'medium' ? 5 : 8,
-    };
-  }
-
-  private createSequenceChallenge(id: string, difficulty: 'easy' | 'medium' | 'hard'): Challenge {
-    let question: string;
-    let answer: number;
-
-    switch (difficulty) {
-      case 'easy':
-        const start1 = Math.floor(Math.random() * 5) + 1;
-        const step1 = Math.floor(Math.random() * 3) + 1;
-        question = `${start1}, ${start1 + step1}, ${start1 + 2*step1}, ${start1 + 3*step1}, ?`;
-        answer = start1 + 4*step1;
-        break;
-      
-      case 'medium':
-        const start2 = Math.floor(Math.random() * 3) + 2;
-        question = `${start2}, ${start2*2}, ${start2*4}, ${start2*8}, ?`;
-        answer = start2 * 16;
-        break;
-      
-      case 'hard':
-        const fib = [1, 1, 2, 3, 5, 8, 13, 21];
-        const startIndex = Math.floor(Math.random() * 3);
-        question = `${fib[startIndex]}, ${fib[startIndex+1]}, ${fib[startIndex+2]}, ${fib[startIndex+3]}, ?`;
-        answer = fib[startIndex+4];
-        break;
-    }
-
-    return {
-      id,
-      type: 'sequence',
-      question,
-      answer,
-      difficulty,
-      timeLimit: difficulty === 'easy' ? 45 : difficulty === 'medium' ? 60 : 90,
-      points: difficulty === 'easy' ? 2 : difficulty === 'medium' ? 4 : 7,
-    };
-  }
-
-  private generateMultipleChoice(correctAnswer: number, difficulty: 'easy' | 'medium' | 'hard'): string[] {
-    const options = [correctAnswer.toString()];
-    const variance = difficulty === 'easy' ? 5 : 10;
-    
-    while (options.length < 4) {
-      const wrongAnswer = correctAnswer + Math.floor(Math.random() * variance) - variance/2;
-      if (wrongAnswer !== correctAnswer && wrongAnswer > 0 && !options.includes(wrongAnswer.toString())) {
-        options.push(wrongAnswer.toString());
       }
     }
-    
-    return options.sort(() => Math.random() - 0.5);
+
+    if (difficulty !== 'hard') {
+      options = this.multipleChoice(answer, difficulty);
+    }
+
+    return {
+      id, type: 'arithmetic', question, answer, difficulty, options,
+      timeLimit: difficulty === 'easy' ? 30 : difficulty === 'medium' ? 45 : 60,
+      points:    difficulty === 'easy' ? 1  : difficulty === 'medium' ? 3  : 5,
+    };
   }
+
+  // ---------------------------------------------------------------------------
+  // Algebra  — guarantees integer answers
+  // ---------------------------------------------------------------------------
+
+  private createAlgebra(id: string, difficulty: 'easy' | 'medium' | 'hard'): Challenge {
+    let question: string;
+    let answer: number;
+
+    switch (difficulty) {
+      case 'easy': {
+        const x = rand(1, 15);
+        const b = rand(1, 10);
+        question = `x + ${b} = ${x + b}. What is x?`;
+        answer = x;
+        break;
+      }
+      case 'medium': {
+        // Ensure b is a divisor of product so answer is always integer
+        const x = rand(2, 10);
+        const a = rand(2, 6);
+        question = `${a}x = ${a * x}. What is x?`;
+        answer = x;
+        break;
+      }
+      case 'hard': {
+        // ax + b = c  →  x = integer guaranteed
+        const x = rand(1, 10);
+        const a = rand(2, 5);
+        const b = rand(1, 20);
+        question = `${a}x + ${b} = ${a * x + b}. What is x?`;
+        answer = x;
+        break;
+      }
+    }
+
+    return {
+      id, type: 'algebra', question, answer, difficulty,
+      timeLimit: difficulty === 'easy' ? 45 : difficulty === 'medium' ? 60 : 90,
+      points:    difficulty === 'easy' ? 2  : difficulty === 'medium' ? 4  : 6,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Logic
+  // ---------------------------------------------------------------------------
+
+  private createLogic(id: string, difficulty: 'easy' | 'medium' | 'hard'): Challenge {
+    const banks: Record<string, { q: string; a: string }[]> = {
+      easy: [
+        { q: 'If all cats are animals and some animals are pets, are all cats pets?', a: 'no' },
+        { q: 'If today is Tuesday, what day will it be in 3 days?', a: 'friday' },
+        { q: 'You have 5 apples and give away 2. How many do you have left?', a: '3' },
+        { q: 'All roses are flowers. Some flowers fade quickly. Do all roses fade quickly?', a: 'no' },
+      ],
+      medium: [
+        { q: 'A bat and a ball cost $1.10. The bat costs $1 more than the ball. How much does the ball cost in dollars?', a: '0.05' },
+        { q: 'If it takes 5 machines 5 minutes to make 5 widgets, how many minutes would it take 100 machines to make 100 widgets?', a: '5' },
+        { q: 'A farmer has 17 sheep. All but 9 die. How many sheep are left?', a: '9' },
+      ],
+      hard: [
+        { q: "In a race you pass the person in 2nd place. What place are you now?", a: 'second' },
+        { q: "A man looks at a portrait and says: 'Brothers and sisters I have none, but that man's father is my father's son.' Who is in the portrait?", a: 'son' },
+        { q: 'There are 3 switches outside a room, one controls a bulb inside. You can enter only once. How do you find which switch controls the bulb?', a: 'turn one on for a while then off, turn another on, enter - warm bulb is first switch, lit bulb is second, cold off bulb is third' },
+      ],
+    };
+
+    const pool = banks[difficulty];
+    const chosen = pool[Math.floor(Math.random() * pool.length)];
+
+    return {
+      id, type: 'logic',
+      question: chosen.q,
+      answer:   chosen.a,
+      difficulty,
+      timeLimit: difficulty === 'easy' ? 60 : difficulty === 'medium' ? 90 : 120,
+      points:    difficulty === 'easy' ? 3  : difficulty === 'medium' ? 5  : 8,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sequence  — dynamic Fibonacci range, no static array
+  // ---------------------------------------------------------------------------
+
+  private createSequence(id: string, difficulty: 'easy' | 'medium' | 'hard'): Challenge {
+    let question: string;
+    let answer: number;
+
+    switch (difficulty) {
+      case 'easy': {
+        const start = rand(1, 5), step = rand(1, 3);
+        question = `${start}, ${start+step}, ${start+2*step}, ${start+3*step}, ?`;
+        answer = start + 4 * step;
+        break;
+      }
+      case 'medium': {
+        const base = rand(2, 4);
+        question = `${base}, ${base*2}, ${base*4}, ${base*8}, ?`;
+        answer = base * 16;
+        break;
+      }
+      case 'hard': {
+        // Generate Fibonacci segment starting at a random offset (0-5)
+        const offset = rand(0, 5);
+        const fib = this.fibSegment(offset, 5); // 5 terms starting at offset
+        question = `${fib[0]}, ${fib[1]}, ${fib[2]}, ${fib[3]}, ?`;
+        answer = fib[4];
+        break;
+      }
+    }
+
+    return {
+      id, type: 'sequence', question, answer, difficulty,
+      timeLimit: difficulty === 'easy' ? 45 : difficulty === 'medium' ? 60 : 90,
+      points:    difficulty === 'easy' ? 2  : difficulty === 'medium' ? 4  : 7,
+    };
+  }
+
+  /** Compute `count` Fibonacci numbers starting from index `startIndex`. */
+  private fibSegment(startIndex: number, count: number): number[] {
+    // Build from scratch up to startIndex + count
+    const full: number[] = [1, 1];
+    for (let i = 2; i < startIndex + count; i++) {
+      full.push(full[i - 1] + full[i - 2]);
+    }
+    return full.slice(startIndex, startIndex + count);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Multiple-choice generator  — guards against negatives & duplicates
+  // ---------------------------------------------------------------------------
+
+  private multipleChoice(correct: number, difficulty: 'easy' | 'medium' | 'hard'): string[] {
+    const variance = difficulty === 'easy' ? 5 : 10;
+    const options = new Set<number>([correct]);
+    let attempts = 0;
+
+    while (options.size < 4 && attempts < 40) {
+      attempts++;
+      const delta = rand(-variance, variance);
+      const candidate = correct + delta;
+      // Reject: same as correct, negative, or already present
+      if (candidate !== correct && candidate > 0) {
+        options.add(candidate);
+      }
+    }
+
+    // If we still don't have 4, pad with sequential values
+    let pad = correct + variance + 1;
+    while (options.size < 4) {
+      options.add(pad++);
+    }
+
+    return shuffle([...options].map(String));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pure utility helpers (module-level, no state)
+// ---------------------------------------------------------------------------
+
+/** Inclusive random integer in [min, max]. */
+function rand(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+/** Fisher-Yates shuffle (returns new array). */
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
