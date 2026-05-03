@@ -3,9 +3,10 @@ import { VerificationService } from './verification.service';
 import { VerificationController } from './verification.controller';
 import { ChallengeModule } from '../challenge/challenge.module';
 import { RiskModule } from '../risk/risk.module';
+import { TokenModule } from '../token/token.module';
 
 @Module({
-  imports: [ChallengeModule, RiskModule],
+  imports: [ChallengeModule, RiskModule, TokenModule],
   controllers: [VerificationController],
   providers: [VerificationService],
   exports: [VerificationService],
