@@ -31,8 +31,10 @@ async function bootstrap() {
 
   const port = process.env.PORT || 3000;
   await app.listen(port);
-  console.log(`🚀 Human Verification Platform running on port ${port}`);
-  console.log(`📱 Demo page available at: http://localhost:${port}/demo.html`);
-  console.log(`📊 API docs at: http://localhost:${port}/api`);
+  console.log(`🚀 MathShield API running on port ${port}`);
+  console.log(`📱 Demo:       http://localhost:${port}/demo.html`);
+  console.log(`📊 Dashboard:  http://localhost:${port}/dashboard.html`);
+  console.log(`🔌 API Base:   http://localhost:${port}/api`);
+
 }
 bootstrap();

@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>MathShield Analytics Dashboard</title>
+  <meta name="description" content="Real-time bot detection analytics — verification rates, risk distribution, attack patterns."/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --bg:#0a0a1a;--surface:#111127;--card:#16162a;--border:#1e1e3d;
+      --accent:#6c63ff;--accent2:#48cfad;--text:#e2e8f0;--muted:#718096;
+      --success:#38a169;--warn:#dd6b20;--danger:#e53e3e;
+      --font:'Inter',system-ui,sans-serif;
+    }
+    body{background:var(--bg);color:var(--text);font-family:var(--font);min-height:100vh}
+
+    /* Sidebar */
+    .sidebar{position:fixed;left:0;top:0;bottom:0;width:220px;background:var(--surface);border-right:1px solid var(--border);padding:0;display:flex;flex-direction:column;z-index:100}
+    .sidebar-logo{padding:22px 20px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+    .sidebar-logo-icon{font-size:24px}
+    .sidebar-logo-text{font-size:16px;font-weight:800;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+    .sidebar-nav{padding:12px 0;flex:1}
+    .nav-item{display:flex;align-items:center;gap:10px;padding:11px 20px;font-size:13px;font-weight:500;color:var(--muted);cursor:pointer;transition:all .15s;border-left:3px solid transparent}
+    .nav-item:hover,.nav-item.active{color:var(--text);background:rgba(108,99,255,.08);border-left-color:var(--accent)}
+    .nav-item span:first-child{font-size:16px}
+    .sidebar-footer{padding:16px 20px;border-top:1px solid var(--border);font-size:11px;color:var(--muted)}
+
+    /* Main */
+    .main{margin-left:220px;padding:28px 32px;min-height:100vh}
+    .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px}
+    .topbar-title{font-size:22px;font-weight:800;letter-spacing:-.02em}
+    .topbar-right{display:flex;align-items:center;gap:12px}
+    .refresh-btn{display:flex;align-items:center;gap:6px;padding:8px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;transition:all .18s}
+    .refresh-btn:hover{background:#5a52d5;transform:translateY(-1px)}
+    .live-badge{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--success)}
+    .live-dot{width:8px;height:8px;border-radius:50%;background:var(--success);animation:pulse 1.5s infinite}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+    .last-updated{font-size:12px;color:var(--muted)}
+
+    /* Stat cards */
+    .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
+    .stat-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;position:relative;overflow:hidden;transition:transform .2s,box-shadow .2s}
+    .stat-card:hover{transform:translateY(-2px);box-shadow:0 8px 32px rgba(0,0,0,.3)}
+    .stat-card::after{content:'';position:absolute;top:0;left:0;right:0;height:3px;border-radius:14px 14px 0 0}
+    .stat-card.blue::after{background:linear-gradient(90deg,var(--accent),#9b59b6)}
+    .stat-card.green::after{background:linear-gradient(90deg,var(--accent2),#27ae60)}
+    .stat-card.warn::after{background:linear-gradient(90deg,var(--warn),#f39c12)}
+    .stat-card.danger::after{background:linear-gradient(90deg,var(--danger),#e91e8c)}
+    .stat-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px}
+    .stat-value{font-size:32px;font-weight:800;letter-spacing:-.02em;line-height:1}
+    .stat-sub{font-size:12px;color:var(--muted);margin-top:6px;display:flex;align-items:center;gap:4px}
+    .stat-sub .up{color:var(--success)}.stat-sub .down{color:var(--danger)}
+    .stat-icon{position:absolute;right:16px;top:16px;font-size:28px;opacity:.15}
+
+    /* Charts grid */
+    .charts-grid{display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-bottom:24px}
+    .chart-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px}
+    .chart-card.full{grid-column:1/-1}
+    .chart-title{font-size:14px;font-weight:700;margin-bottom:4px}
+    .chart-sub{font-size:12px;color:var(--muted);margin-bottom:18px}
+    .chart-wrap{position:relative;height:220px}
+
+    /* Bottom grid */
+    .bottom-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+
+    /* Risk distribution list */
+    .risk-list{margin-top:8px}
+    .risk-item{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+    .risk-name{font-size:13px;font-weight:500;display:flex;align-items:center;gap:6px}
+    .risk-dot{width:8px;height:8px;border-radius:50%}
+    .risk-count{font-size:13px;font-weight:700}
+    .risk-bar-wrap{width:100%;height:5px;background:var(--border);border-radius:3px;margin-top:4px;overflow:hidden}
+    .risk-bar{height:100%;border-radius:3px;transition:width .8s ease}
+
+    /* Challenge type table */
+    .type-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+    .type-table th{text-align:left;color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em;padding:8px 0;border-bottom:1px solid var(--border)}
+    .type-table td{padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+    .type-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:rgba(108,99,255,.15);color:var(--accent)}
+
+    /* Attack patterns */
+    .attack-list{margin-top:8px}
+    .attack-item{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:8px;background:rgba(229,62,62,.06);border:1px solid rgba(229,62,62,.12);margin-bottom:6px;font-size:12px}
+    .attack-ip{font-family:monospace;color:var(--danger);font-weight:600}
+    .attack-count{background:rgba(229,62,62,.2);color:var(--danger);padding:2px 8px;border-radius:4px;font-weight:700}
+    .no-attacks{text-align:center;color:var(--success);font-size:13px;padding:20px 0}
+
+    /* Loading shimmer */
+    .shimmer{background:linear-gradient(90deg,var(--border) 25%,rgba(255,255,255,.05) 50%,var(--border) 75%);background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:6px}
+    @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+    @media(max-width:1200px){.stats-grid{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:900px){.charts-grid,.bottom-grid{grid-template-columns:1fr}.sidebar{display:none}.main{margin-left:0}}
+  </style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <div class="sidebar-logo-icon">🛡️</div>
+    <div class="sidebar-logo-text">MathShield</div>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-item active" id="nav-overview"><span>📊</span><span>Overview</span></div>
+    <div class="nav-item" onclick="window.location='/demo.html'"><span>🧪</span><span>Demo Widget</span></div>
+    <div class="nav-item" onclick="alert('API Docs coming soon!')"><span>🔌</span><span>API Docs</span></div>
+    <div class="nav-item" onclick="alert('Settings coming soon!')"><span>⚙️</span><span>Settings</span></div>
+  </nav>
+  <div class="sidebar-footer">MathShield v2.0 · CDN</div>
+</aside>
+
+<!-- Main Content -->
+<main class="main">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Analytics Dashboard</div>
+      <div class="last-updated" id="last-updated">Loading…</div>
+    </div>
+    <div class="topbar-right">
+      <div class="live-badge"><div class="live-dot"></div>Live</div>
+      <button class="refresh-btn" onclick="loadAll()">↻ Refresh</button>
+    </div>
+  </div>
+
+  <!-- Stat Cards -->
+  <div class="stats-grid">
+    <div class="stat-card blue">
+      <div class="stat-icon">✅</div>
+      <div class="stat-label">Total Verifications</div>
+      <div class="stat-value" id="s-total">—</div>
+      <div class="stat-sub"><span class="up">↑</span> all time</div>
+    </div>
+    <div class="stat-card green">
+      <div class="stat-icon">🎯</div>
+      <div class="stat-label">Success Rate</div>
+      <div class="stat-value" id="s-success">—</div>
+      <div class="stat-sub">humans verified</div>
+    </div>
+    <div class="stat-card warn">
+      <div class="stat-icon">⏱️</div>
+      <div class="stat-label">Avg Solve Time</div>
+      <div class="stat-value" id="s-time">—</div>
+      <div class="stat-sub">per challenge</div>
+    </div>
+    <div class="stat-card danger">
+      <div class="stat-icon">🤖</div>
+      <div class="stat-label">Bot Traffic</div>
+      <div class="stat-value" id="s-bots">—</div>
+      <div class="stat-sub">high-risk requests</div>
+    </div>
+  </div>
+
+  <!-- Charts Row -->
+  <div class="charts-grid">
+    <div class="chart-card">
+      <div class="chart-title">Verification Activity</div>
+      <div class="chart-sub">Successes vs failures over last 24h</div>
+      <div class="chart-wrap"><canvas id="chart-timeseries"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Challenge Type Mix</div>
+      <div class="chart-sub">Distribution of challenge categories</div>
+      <div class="chart-wrap"><canvas id="chart-types"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Bottom Row -->
+  <div class="bottom-grid">
+    <div class="chart-card">
+      <div class="chart-title">Risk Distribution</div>
+      <div class="chart-sub">Traffic by risk level</div>
+      <div class="risk-list" id="risk-list">
+        <div class="shimmer" style="height:60px;margin-bottom:8px"></div>
+        <div class="shimmer" style="height:60px;margin-bottom:8px"></div>
+        <div class="shimmer" style="height:60px"></div>
+      </div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Challenge Stats</div>
+      <div class="chart-sub">By type and solve rate</div>
+      <table class="type-table">
+        <thead><tr><th>Type</th><th>Count</th><th>%</th></tr></thead>
+        <tbody id="type-table-body">
+          <tr><td colspan="3"><div class="shimmer" style="height:40px;margin:8px 0"></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">⚠️ Attack Patterns</div>
+      <div class="chart-sub">High-frequency IPs detected</div>
+      <div class="attack-list" id="attack-list">
+        <div class="shimmer" style="height:36px;margin-bottom:6px"></div>
+        <div class="shimmer" style="height:36px;margin-bottom:6px"></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+  const API = 'http://localhost:3000/api';
+  const API_KEY = 'demo-key';
+  const headers = { 'Authorization': `Bearer ${API_KEY}` };
+
+  let tsChart, typeChart;
+
+  Chart.defaults.color = '#718096';
+  Chart.defaults.font.family = 'Inter, system-ui';
+  Chart.defaults.borderColor = '#1e1e3d';
+
+  /* ── Timeseries Chart ── */
+  function initTsChart(labels, successes, failures) {
+    const ctx = document.getElementById('chart-timeseries').getContext('2d');
+    if (tsChart) tsChart.destroy();
+    tsChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Successes', data: successes, borderColor: '#48cfad', backgroundColor: 'rgba(72,207,173,.12)', fill: true, tension: 0.4, pointRadius: 3 },
+          { label: 'Failures', data: failures, borderColor: '#e53e3e', backgroundColor: 'rgba(229,62,62,.08)', fill: true, tension: 0.4, pointRadius: 3 },
+        ]
+      },
+      options: { responsive: true, maintainAspectRatio: false, interaction: { intersect: false, mode: 'index' }, plugins: { legend: { position: 'top', labels: { boxWidth: 10, padding: 16 } } }, scales: { x: { grid: { color: '#1e1e3d' } }, y: { grid: { color: '#1e1e3d' }, beginAtZero: true } } }
+    });
+  }
+
+  /* ── Type Donut Chart ── */
+  function initTypeChart(data) {
+    const ctx = document.getElementById('chart-types').getContext('2d');
+    if (typeChart) typeChart.destroy();
+    const labels = Object.keys(data);
+    const values = Object.values(data);
+    typeChart = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels,
+        datasets: [{ data: values, backgroundColor: ['#6c63ff','#48cfad','#f39c12','#e74c3c','#9b59b6','#1abc9c'], borderColor: '#16162a', borderWidth: 3 }]
+      },
+      options: { responsive: true, maintainAspectRatio: false, cutout: '68%', plugins: { legend: { position: 'right', labels: { padding: 12, boxWidth: 10 } } } }
+    });
+  }
+
+  /* ── Risk Distribution ── */
+  function renderRisk(dist) {
+    const total = (dist.low + dist.medium + dist.high) || 1;
+    const items = [
+      { label: 'Low Risk', count: dist.low, color: '#48cfad', pct: Math.round(dist.low/total*100) },
+      { label: 'Medium Risk', count: dist.medium, color: '#f39c12', pct: Math.round(dist.medium/total*100) },
+      { label: 'High Risk', count: dist.high, color: '#e53e3e', pct: Math.round(dist.high/total*100) },
+    ];
+    document.getElementById('risk-list').innerHTML = items.map(i => `
+      <div class="risk-item">
+        <div style="flex:1">
+          <div class="risk-name"><span class="risk-dot" style="background:${i.color}"></span>${i.label}</div>
+          <div class="risk-bar-wrap"><div class="risk-bar" style="width:${i.pct}%;background:${i.color}"></div></div>
+        </div>
+        <div class="risk-count" style="color:${i.color};margin-left:12px">${i.pct}%</div>
+      </div>`).join('');
+  }
+
+  /* ── Challenge Type Table ── */
+  function renderTypeTable(stats) {
+    const total = Object.values(stats).reduce((a,b)=>a+b,0) || 1;
+    const rows = Object.entries(stats).map(([type, count]) => `
+      <tr>
+        <td><span class="type-badge">${type}</span></td>
+        <td>${count.toLocaleString()}</td>
+        <td style="color:var(--muted)">${Math.round(count/total*100)}%</td>
+      </tr>`).join('');
+    document.getElementById('type-table-body').innerHTML = rows || '<tr><td colspan="3" style="color:var(--muted);padding:12px 0">No data yet</td></tr>';
+  }
+
+  /* ── Attack Patterns ── */
+  function renderAttacks(patterns) {
+    const ips = patterns.highFrequencyIps || [];
+    document.getElementById('attack-list').innerHTML = ips.length
+      ? ips.slice(0,5).map(ip => `
+          <div class="attack-item">
+            <span class="attack-ip">${ip}</span>
+            <span class="attack-count">HIGH FREQ</span>
+          </div>`).join('')
+      : '<div class="no-attacks">✅ No active attacks detected</div>';
+  }
+
+  /* ── Load All ── */
+  async function loadAll() {
+    document.getElementById('last-updated').textContent = 'Refreshing…';
+    try {
+      const [analyticsRes, tsRes] = await Promise.all([
+        fetch(`${API}/analytics`, { headers }),
+        fetch(`${API}/analytics/timeseries?hours=24`, { headers }),
+      ]);
+
+      if (!analyticsRes.ok) throw new Error(`API ${analyticsRes.status}`);
+
+      const analytics = await analyticsRes.json();
+      const timeseries = tsRes.ok ? await tsRes.json() : [];
+
+      /* Stat cards */
+      document.getElementById('s-total').textContent = analytics.totalVerifications.toLocaleString();
+      document.getElementById('s-success').textContent = analytics.successRate.toFixed(1) + '%';
+      document.getElementById('s-time').textContent = analytics.averageSolveTime > 0
+        ? (analytics.averageSolveTime / 1000).toFixed(1) + 's' : '—';
+      document.getElementById('s-bots').textContent = analytics.botTrafficPercentage.toFixed(1) + '%';
+
+      /* Charts */
+      const labels = timeseries.map(d => new Date(d.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      initTsChart(labels, timeseries.map(d => d.successes), timeseries.map(d => d.failures));
+      initTypeChart(analytics.challengeTypeStats || {});
+      renderRisk(analytics.riskDistribution || { low:0, medium:0, high:0 });
+      renderTypeTable(analytics.challengeTypeStats || {});
+      renderAttacks(analytics.attackPatterns || {});
+
+      document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+    } catch (err) {
+      document.getElementById('last-updated').textContent = '⚠️ ' + err.message + ' — Is the server running?';
+      console.error(err);
+    }
+  }
+
+  loadAll();
+  setInterval(loadAll, 30000); // Auto-refresh every 30s
+</script>
+</body>
+</html>

@@ -1,7 +1,10 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ChallengeService, Challenge } from '../challenge/challenge.service';
-import { RiskService, RiskScore } from '../risk/risk.service';
+import { RiskService } from '../risk/risk.service';
 import { TokenService, VerificationToken } from '../token/token.service';
+import { BehaviorService, BehaviorData } from '../behavior/behavior.service';
+
+export { BehaviorData } from '../behavior/behavior.service';
 
 export interface VerificationRequest {
   challengeId: string;
@@ -9,44 +12,6 @@ export interface VerificationRequest {
   timeTaken: number; // in milliseconds
   behaviorData?: BehaviorData;
   riskFactors?: any;
-}
-
-export interface BehaviorData {
-  mouseMovements?: MouseMovement[];
-  clickTiming?: ClickTiming[];
-  typingPattern?: TypingPattern;
-  focusEvents?: FocusEvent[];
-}
-
-export interface MouseMovement {
-  x: number;
-  y: number;
-  timestamp: number;
-  duration: number;
-}
-
-export interface ClickTiming {
-  timestamp: number;
-  target: string;
-  delay: number; // time from previous action
-}
-
-export interface TypingPattern {
-  keystrokes: Keystroke[];
-  averageSpeed: number;
-  corrections: number;
-}
-
-export interface Keystroke {
-  key: string;
-  timestamp: number;
-  delay: number;
-}
-
-export interface FocusEvent {
-  type: 'focus' | 'blur';
-  timestamp: number;
-  element: string;
 }
 
 export interface VerificationResult {
@@ -77,6 +42,7 @@ export class VerificationService {
     private readonly challengeService: ChallengeService,
     private readonly riskService: RiskService,
     private readonly tokenService: TokenService,
+    private readonly behaviorService: BehaviorService,
   ) {}
 
   async verifyResponse(request: VerificationRequest): Promise<VerificationResult> {
@@ -105,8 +71,9 @@ export class VerificationService {
     // Calculate time-based scoring
     const timeScore = this.calculateTimeScore(challenge, request.timeTaken);
     
-    // Calculate behavior-based scoring
-    const behaviorScore = this.calculateBehaviorScore(request.behaviorData);
+    // Calculate behavior-based scoring via BehaviorService
+    const behaviorAnalysis = this.behaviorService.analyze(request.behaviorData);
+    const behaviorScore = behaviorAnalysis.score;
     
     // Calculate risk-based adjustment
     let riskScore = 0;
@@ -214,131 +181,6 @@ export class VerificationService {
       const ratio = overTime / timeLimit;
       return Math.max(0, 50 - (ratio * 50));
     }
-  }
-
-  private calculateBehaviorScore(behaviorData?: BehaviorData): number {
-    if (!behaviorData) return 50; // No behavior data = medium score
-
-    let score = 50; // Base score
-
-    // Mouse movement analysis
-    if (behaviorData.mouseMovements && behaviorData.mouseMovements.length > 0) {
-      const mouseScore = this.analyzeMouseMovements(behaviorData.mouseMovements);
-      score = (score + mouseScore) / 2;
-    }
-
-    // Click timing analysis
-    if (behaviorData.clickTiming && behaviorData.clickTiming.length > 0) {
-      const clickScore = this.analyzeClickTiming(behaviorData.clickTiming);
-      score = (score + clickScore) / 2;
-    }
-
-    // Typing pattern analysis
-    if (behaviorData.typingPattern) {
-      const typingScore = this.analyzeTypingPattern(behaviorData.typingPattern);
-      score = (score + typingScore) / 2;
-    }
-
-    // Focus events analysis
-    if (behaviorData.focusEvents && behaviorData.focusEvents.length > 0) {
-      const focusScore = this.analyzeFocusEvents(behaviorData.focusEvents);
-      score = (score + focusScore) / 2;
-    }
-
-    return Math.min(100, Math.max(0, score));
-  }
-
-  private analyzeMouseMovements(movements: MouseMovement[]): number {
-    if (movements.length < 2) return 30;
-
-    let totalDistance = 0;
-    let totalDuration = 0;
-    let directionChanges = 0;
-    let lastDirection = 0;
-
-    for (let i = 1; i < movements.length; i++) {
-      const prev = movements[i - 1];
-      const curr = movements[i];
-      
-      const distance = Math.sqrt(
-        Math.pow(curr.x - prev.x, 2) + Math.pow(curr.y - prev.y, 2)
-      );
-      totalDistance += distance;
-      totalDuration += curr.duration;
-
-      // Calculate direction change
-      const direction = Math.atan2(curr.y - prev.y, curr.x - prev.x);
-      if (i > 1 && Math.abs(direction - lastDirection) > Math.PI / 4) {
-        directionChanges++;
-      }
-      lastDirection = direction;
-    }
-
-    // Human-like patterns
-    const avgSpeed = totalDistance / totalDuration;
-    const directionChangeRatio = directionChanges / movements.length;
-
-    // Perfect straight lines = bot-like
-    const straightness = directionChangeRatio < 0.1 ? 20 : 80;
-    
-    // Too fast or too slow = bot-like
-    const speedScore = avgSpeed < 0.1 || avgSpeed > 10 ? 30 : 70;
-
-    return (straightness + speedScore) / 2;
-  }
-
-  private analyzeClickTiming(clicks: ClickTiming[]): number {
-    if (clicks.length < 2) return 40;
-
-    const delays = clicks.slice(1).map((click, i) => 
-      click.timestamp - clicks[i].timestamp
-    );
-
-    const avgDelay = delays.reduce((a, b) => a + b, 0) / delays.length;
-    const variance = delays.reduce((sum, delay) => 
-      sum + Math.pow(delay - avgDelay, 2), 0
-    ) / delays.length;
-
-    // Consistent timing = bot-like
-    const consistencyScore = variance < 100 ? 30 : 70;
-    
-    // Too fast = bot-like
-    const speedScore = avgDelay < 100 ? 25 : 75;
-
-    return (consistencyScore + speedScore) / 2;
-  }
-
-  private analyzeTypingPattern(pattern: TypingPattern): number {
-    const { keystrokes, averageSpeed, corrections } = pattern;
-
-    if (keystrokes.length < 3) return 40;
-
-    // Too fast = bot-like
-    const speedScore = averageSpeed < 50 || averageSpeed > 500 ? 30 : 70;
-    
-    // No corrections = bot-like
-    const correctionScore = corrections === 0 ? 40 : 80;
-    
-    // Perfect intervals = bot-like
-    const delays = keystrokes.slice(1).map((key, i) => 
-      key.delay
-    );
-    const variance = delays.reduce((sum, delay) => 
-      sum + Math.pow(delay - averageSpeed, 2), 0
-    ) / delays.length;
-    const rhythmScore = variance < 50 ? 30 : 70;
-
-    return (speedScore + correctionScore + rhythmScore) / 3;
-  }
-
-  private analyzeFocusEvents(events: FocusEvent[]): number {
-    const focusCount = events.filter(e => e.type === 'focus').length;
-    const blurCount = events.filter(e => e.type === 'blur').length;
-
-    // Normal human behavior: some focus/blur events
-    if (focusCount === 0 && blurCount === 0) return 60;
-    if (focusCount > 0 && blurCount > 0) return 80;
-    return 50;
   }
 
   private calculateIntelligenceScore(
