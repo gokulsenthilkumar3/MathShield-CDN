@@ -1,302 +1,157 @@
-# 🛡️ Human Verification Shield
+# MathShield CDN
 
-A math-driven human verification and bot protection platform that provides intelligent, adaptive security for web applications.
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![NestJS](https://img.shields.io/badge/NestJS-v10-red.svg)](https://nestjs.com)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org)
 
-## 🚀 Features
+> A math-based human verification CDN — stop bots with intelligent challenges, not friction.
 
-- **Dynamic Math Challenges**: Arithmetic, algebra, logic, and sequence problems
-- **Behavioral Analysis**: Mouse tracking, typing patterns, and interaction timing
-- **Risk Scoring Engine**: IP reputation, request frequency, and device fingerprinting
-- **Adaptive Intelligence**: Difficulty adjusts based on risk assessment
-- **Drop-in Integration**: Simple JavaScript widget for easy deployment
-- **Real-time Analytics**: Attack pattern detection and traffic analysis
-- **Multiple Themes**: Light and dark mode support
+## Overview
 
-## 🏗️ Architecture
+**MathShield** is a drop-in CAPTCHA alternative that uses adaptive math and logic challenges combined with real-time risk scoring to distinguish humans from bots. It generates a signed JWT token on success that your backend can verify independently.
+
+---
+
+## Architecture
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Client Layer  │───▶│  API Gateway    │───▶│ Challenge Engine│
-│   (JS Widget)   │    │  (Rate Limit)   │    │  (Math Gen)     │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                │                        │
-                                ▼                        ▼
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│ Behavior Engine │    │  Risk Scoring   │    │ Verification    │
-│ (Mouse/Typing)  │    │  (IP Analysis)  │    │   Engine        │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                │                        │
-                                ▼                        ▼
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Data Layer    │    │   Analytics     │    │   Dashboard     │
-│ (Redis/Postgres)│    │   (Reports)     │    │   (UI)          │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
+┌─────────────────────────────────────────────────────┐
+│                   MathShield CDN                    │
+│                                                     │
+│  ┌────────────┐  ┌─────────────┐  ┌─────────────┐  │
+│  │  Challenge │  │    Risk     │  │  Analytics  │  │
+│  │  Service   │  │   Service   │  │   Service   │  │
+│  └─────┬──────┘  └──────┬──────┘  └─────────────┘  │
+│        │                │                           │
+│  ┌─────▼────────────────▼──────┐                    │
+│  │      Verification Service   │                    │
+│  └─────────────┬───────────────┘                    │
+│                │                                    │
+│  ┌─────────────▼───────────────┐                    │
+│  │       Token Service         │                    │
+│  │  (signs & verifies JWTs)    │                    │
+│  └─────────────────────────────┘                    │
+└─────────────────────────────────────────────────────┘
 ```
 
-## 🛠️ Tech Stack
+---
 
-- **Backend**: Node.js with NestJS
-- **Database**: PostgreSQL (analytics) + Redis (sessions)
-- **Frontend**: Vanilla JavaScript widget
-- **Security**: Helmet, Rate Limiting, Input Validation
+## Quick Start
 
-## 🚀 Quick Start
-
-### 1. Install Dependencies
 ```bash
+# Install dependencies
 npm install
-```
 
-### 2. Environment Setup
-```bash
+# Copy environment config
 cp .env.example .env
-# Edit .env with your configuration
-```
 
-### 3. Start Development Server
-```bash
+# Start development server
 npm run start:dev
 ```
 
-### 4. Test the Demo
-Open `public/demo.html` in your browser to test the verification widget.
+The server starts on port 3000 by default.
+- **Demo:** `http://localhost:3000/demo.html`
+- **Swagger UI:** `http://localhost:3000/api`
 
-## 🔧 Integration
+---
 
-### Basic Integration
+## Widget Integration
+
+Add MathShield to your frontend with a single script tag:
+
 ```html
-<script src="https://yourdomain.com/shield.js"></script>
-<script>
-  const shield = new HumanShield({
-    apiKey: 'your-api-key',
-    theme: 'light',
-    onVerified: (result) => {
-      console.log('Verified!', result);
-      // Allow user to proceed
-    }
-  });
-  
-  shield.init();
-  shield.start();
-</script>
+<script src="https://your-cdn-domain.com/mathshield.js"></script>
+
+<div class="mathshield-widget" data-site-key="YOUR_SITE_KEY"></div>
 ```
 
-### Advanced Configuration
+Listen for the verification result:
+
 ```javascript
-const shield = new HumanShield({
-  apiKey: 'your-api-key',
-  theme: 'dark',
-  invisible: false,
-  language: 'en',
-  onVerified: (result) => {
-    // Handle successful verification
-    console.log('Intelligence Score:', result.intelligenceScore);
-    console.log('Confidence:', result.confidence);
-    console.log('Risk Level:', result.riskLevel);
-  },
-  onError: (error) => {
-    // Handle errors
-    console.error('Verification failed:', error);
+document.querySelector('.mathshield-widget').addEventListener('mathshield:verified', (e) => {
+  const { token, success, intelligenceScore } = e.detail;
+  if (success) {
+    // Send token to your backend for verification
+    submitForm({ token });
   }
 });
 ```
 
-## 📊 API Endpoints
+---
 
-### Generate Challenge
-```http
-POST /api/challenge/generate
-Content-Type: application/json
+## Token Verification Flow
 
+```
+Frontend                  MathShield CDN               Your Backend
+   │                            │                            │
+   │──── POST /api/challenge ──►│                            │
+   │◄─── { challengeId, ... } ──│                            │
+   │                            │                            │
+   │──── POST /api/verification/verify ──►│                  │
+   │◄─── { success, token, ... } ─────────│                  │
+   │                            │                            │
+   │──────────────── POST /your-endpoint { token } ─────────►│
+   │                            │  POST /api/verification/    │
+   │                            │◄── verify-token { token } ─│
+   │                            │──── { valid, payload } ───►│
+   │                            │                            │
+   │◄──────────────── 200 OK ───────────────────────────────│
+```
+
+---
+
+## API Reference
+
+### Generate a Challenge
+`POST /api/challenge/generate`
+
+```json
 {
   "difficulty": "medium",
-  "type": "arithmetic",
+  "type": "algebra",
   "riskScore": 45
 }
 ```
 
-### Verify Response
-```http
-POST /api/verification/verify
-Content-Type: application/json
+### Submit an Answer
+`POST /api/verification/verify`
 
+```json
 {
-  "challengeId": "abc123",
-  "answer": "42",
-  "timeTaken": 15000,
-  "behaviorData": {
-    "mouseMovements": [...],
-    "typingPattern": {...}
-  },
-  "riskFactors": {
-    "ip": "192.168.1.1",
-    "userAgent": "Mozilla/5.0..."
-  }
+  "challengeId": "<uuid>",
+  "answer": "7",
+  "timeTaken": 12500,
+  "behaviorData": { ... }
 }
 ```
 
-### Get Analytics
-```http
-GET /api/analytics
+### Verify a Token (Backend)
+`POST /api/verification/verify-token`
+
+```json
+{ "token": "<jwt>" }
 ```
-
-### Calculate Risk Score
-```http
-POST /api/risk/calculate
-Content-Type: application/json
-
-{
-  "ip": "192.168.1.1",
-  "userAgent": "Mozilla/5.0...",
-  "requestFrequency": 5
-}
-```
-
-## 🎯 Challenge Types
-
-### Arithmetic
-- **Easy**: Simple addition/subtraction (10 + 5 = ?)
-- **Medium**: Multi-step calculations (25 - 8 = ?)
-- **Hard**: Multiplication/division (12 × 8 = ?)
-
-### Algebra
-- **Easy**: Basic equations (x + 5 = 12)
-- **Medium**: Variable coefficients (3x = 21)
-- **Hard**: Complex equations (2x + 7 = 19)
-
-### Logic
-- **Easy**: Simple reasoning problems
-- **Medium**: Classic logic puzzles
-- **Hard**: Complex logical deductions
-
-### Sequences
-- **Easy**: Arithmetic progressions
-- **Medium**: Geometric progressions
-- **Hard**: Fibonacci and custom patterns
-
-## 🧠 Risk Scoring
-
-The risk engine analyzes multiple factors:
-
-### IP Analysis (25% weight)
-- Private IP ranges: Low risk
-- Data center IPs: High risk
-- Tor exit nodes: Very high risk
-- Request frequency patterns
-
-### Behavior Analysis (20% weight)
-- Mouse movement patterns
-- Click timing consistency
-- Typing rhythm
-- Focus/blur events
-
-### Historical Data (15% weight)
-- Past verification success rate
-- Known bot patterns
-- Reputation scores
-
-### Device Fingerprinting (15% weight)
-- User agent analysis
-- Screen resolution
-- Browser characteristics
-
-## 📈 Intelligence Scoring
-
-Instead of simple pass/fail, the system provides:
-
-- **Intelligence Score** (0-100): Based on correctness, speed, and behavior
-- **Confidence Level** (0-100): How certain we are about the result
-- **Risk Assessment**: Low/Medium/High risk categorization
-- **Adaptive Score**: Reusable identity signal across applications
-
-## 🔒 Security Features
-
-- **Rate Limiting**: Prevents brute force attacks
-- **Input Validation**: Sanitizes all user inputs
-- **Challenge Expiration**: Time-limited verification windows
-- **Behavior Fingerprinting**: Detects automated interactions
-- **IP Reputation**: Blocks known malicious sources
-- **Encryption**: Secure data transmission
-
-## 📊 Analytics Dashboard
-
-Monitor:
-- Total verification attempts
-- Success/failure rates
-- Average solve times
-- Bot traffic percentage
-- Risk distribution
-- Attack patterns
-- Geographic data
-
-## 🚀 Deployment
-
-### Production Setup
-```bash
-# Build for production
-npm run build
-
-# Start production server
-npm run start:prod
-```
-
-### Docker Deployment
-```dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY dist/ ./dist/
-COPY public/ ./public/
-EXPOSE 3000
-CMD ["node", "dist/main"]
-```
-
-### Environment Variables
-```env
-PORT=3000
-NODE_ENV=production
-DB_HOST=localhost
-DB_PORT=5432
-DB_USERNAME=postgres
-DB_PASSWORD=your-password
-DB_DATABASE=verification_platform
-REDIS_HOST=localhost
-REDIS_PORT=6379
-API_KEY_SECRET=your-secret-key
-```
-
-## 🧪 Testing
-
-```bash
-# Run unit tests
-npm test
-
-# Run integration tests
-npm run test:e2e
-
-# Test with coverage
-npm run test:cov
-```
-
-## 📝 License
-
-MIT License - feel free to use in commercial projects!
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
-
-## 🆘 Support
-
-- 📧 Email: support@human-shield.com
-- 💬 Discord: [Join our community](https://discord.gg/human-shield)
-- 📖 Documentation: [docs.human-shield.com](https://docs.human-shield.com)
 
 ---
 
-**Built with ❤️ for a safer internet**
+## Environment Variables
+
+| Variable | Description | Default |
+|---|---|---|
+| `PORT` | Server port | `3000` |
+| `DB_HOST` | PostgreSQL host | `localhost` |
+| `DB_PORT` | PostgreSQL port | `5432` |
+| `DB_USERNAME` | DB username | `postgres` |
+| `DB_PASSWORD` | DB password | — |
+| `DB_DATABASE` | DB name | `mathshield` |
+| `JWT_SECRET` | JWT signing secret | — |
+| `API_KEY` | API key for protected endpoints | — |
+| `ALLOWED_ORIGINS` | Comma-separated CORS origins | *(all in dev)* |
+| `REDIS_URL` | Redis URL for cache (optional) | *(in-memory)* |
+| `NODE_ENV` | `development` \| `production` | `development` |
+
+---
+
+## License
+
+MIT © MathShield

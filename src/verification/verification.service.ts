@@ -28,7 +28,7 @@ export interface MouseMovement {
 export interface ClickTiming {
   timestamp: number;
   target: string;
-  delay: number; // time from previous action
+  delay: number;
 }
 
 export interface TypingPattern {
@@ -67,8 +67,8 @@ export interface VerificationResult {
     riskLevel: string;
     expiresAt: Date;
   };
-  token?: VerificationToken; // JWT token for backend verification
-  explanation?: string; // Educational explanation of the answer
+  token?: VerificationToken;
+  explanation?: string;
 }
 
 @Injectable()
@@ -80,35 +80,29 @@ export class VerificationService {
   ) {}
 
   async verifyResponse(request: VerificationRequest): Promise<VerificationResult> {
-    // Get the challenge
     const challenge = await this.challengeService.getChallengeById(request.challengeId);
     if (!challenge) {
       throw new Error('Challenge not found or expired');
     }
 
-    // Verify challenge signature to prevent tampering
     if (challenge.signature) {
       const isValidSignature = this.tokenService.verifyChallengeSignature(
         challenge.id,
         challenge.type,
         challenge.difficulty,
-        challenge.signature
+        challenge.signature,
       );
       if (!isValidSignature) {
         throw new UnauthorizedException('Challenge signature verification failed - possible tampering detected');
       }
     }
 
-    // Calculate base correctness
     const isCorrect = this.checkAnswer(challenge, request.answer);
-    
-    // Calculate time-based scoring
     const timeScore = this.calculateTimeScore(challenge, request.timeTaken);
-    
-    // Calculate behavior-based scoring
+
+    // Proper weighted behavior score — collect all signals then average once
     const behaviorScore = this.calculateBehaviorScore(request.behaviorData);
-    
-    // Calculate risk-based adjustment
+
     let riskScore = 0;
     let riskLevel: 'low' | 'medium' | 'high' = 'low';
     if (request.riskFactors) {
@@ -117,14 +111,13 @@ export class VerificationService {
       riskLevel = riskAnalysis.level;
     }
 
-    // Calculate overall confidence and intelligence scores
     const baseConfidence = isCorrect ? 60 : 20;
     const timeBonus = timeScore * 0.2;
     const behaviorBonus = behaviorScore * 0.15;
     const riskPenalty = riskScore * 0.05;
 
-    const confidence = Math.min(100, Math.max(0, 
-      baseConfidence + timeBonus + behaviorBonus - riskPenalty
+    const confidence = Math.min(100, Math.max(0,
+      baseConfidence + timeBonus + behaviorBonus - riskPenalty,
     ));
 
     const intelligenceScore = this.calculateIntelligenceScore(
@@ -132,43 +125,40 @@ export class VerificationService {
       isCorrect,
       request.timeTaken,
       behaviorScore,
-      riskScore
+      riskScore,
     );
 
-    // Generate reasoning
     const reasoning = this.generateReasoning(
       isCorrect,
       timeScore,
       behaviorScore,
       riskScore,
-      challenge
+      challenge,
     );
 
-    // Generate adaptive intelligence score
     const adaptiveScore = this.generateAdaptiveIntelligenceScore(
       intelligenceScore,
       confidence,
-      riskLevel
+      riskLevel,
     );
 
-    // Clean up challenge
     await this.challengeService.removeChallenge(request.challengeId);
 
-    // Generate JWT token for successful verifications
+    // Gate token on correctness AND intelligenceScore — prevents fast-but-wrong bots
     let token: VerificationToken | undefined;
-    if (confidence > 50) {
+    if (isCorrect && intelligenceScore > 50) {
       token = await this.tokenService.generateVerificationToken(
         challenge.id,
         challenge.type,
         challenge.difficulty,
         Math.round(intelligenceScore),
         Math.round(confidence),
-        riskLevel
+        riskLevel,
       );
     }
 
     return {
-      success: confidence > 50, // Threshold for passing
+      success: isCorrect && confidence > 50,
       confidence: Math.round(confidence),
       intelligenceScore: Math.round(intelligenceScore),
       riskLevel,
@@ -188,157 +178,104 @@ export class VerificationService {
   private checkAnswer(challenge: Challenge, answer: string | number): boolean {
     const correctAnswer = challenge.answer.toString().toLowerCase().trim();
     const userAnswer = answer.toString().toLowerCase().trim();
-    
-    // Exact match for numbers
     if (!isNaN(Number(correctAnswer)) && !isNaN(Number(userAnswer))) {
       return Math.abs(parseFloat(correctAnswer) - parseFloat(userAnswer)) < 0.01;
     }
-    
-    // String match with tolerance
     return correctAnswer === userAnswer;
   }
 
   private calculateTimeScore(challenge: Challenge, timeTaken: number): number {
-    const timeLimit = challenge.timeLimit * 1000; // Convert to milliseconds
-    const optimalTime = timeLimit * 0.6; // 60% of time limit is optimal
-    
-    if (timeTaken <= optimalTime) {
-      return 100; // Perfect timing
-    } else if (timeTaken <= timeLimit) {
-      // Linear decrease from optimal to time limit
+    const timeLimit = challenge.timeLimit * 1000;
+    const optimalTime = timeLimit * 0.6;
+    if (timeTaken <= optimalTime) return 100;
+    if (timeTaken <= timeLimit) {
       const ratio = (timeTaken - optimalTime) / (timeLimit - optimalTime);
-      return 100 - (ratio * 50); // Down to 50
-    } else {
-      // Over time limit - exponential decrease
-      const overTime = timeTaken - timeLimit;
-      const ratio = overTime / timeLimit;
-      return Math.max(0, 50 - (ratio * 50));
+      return 100 - ratio * 50;
     }
+    const overTime = timeTaken - timeLimit;
+    const ratio = overTime / timeLimit;
+    return Math.max(0, 50 - ratio * 50);
   }
 
+  /**
+   * Properly weighted behavior score.
+   * Each signal contributes with equal weight; only available signals are counted.
+   */
   private calculateBehaviorScore(behaviorData?: BehaviorData): number {
-    if (!behaviorData) return 50; // No behavior data = medium score
+    if (!behaviorData) return 50;
 
-    let score = 50; // Base score
+    const signals: number[] = [];
 
-    // Mouse movement analysis
     if (behaviorData.mouseMovements && behaviorData.mouseMovements.length > 0) {
-      const mouseScore = this.analyzeMouseMovements(behaviorData.mouseMovements);
-      score = (score + mouseScore) / 2;
+      signals.push(this.analyzeMouseMovements(behaviorData.mouseMovements));
     }
-
-    // Click timing analysis
     if (behaviorData.clickTiming && behaviorData.clickTiming.length > 0) {
-      const clickScore = this.analyzeClickTiming(behaviorData.clickTiming);
-      score = (score + clickScore) / 2;
+      signals.push(this.analyzeClickTiming(behaviorData.clickTiming));
     }
-
-    // Typing pattern analysis
     if (behaviorData.typingPattern) {
-      const typingScore = this.analyzeTypingPattern(behaviorData.typingPattern);
-      score = (score + typingScore) / 2;
+      signals.push(this.analyzeTypingPattern(behaviorData.typingPattern));
     }
-
-    // Focus events analysis
     if (behaviorData.focusEvents && behaviorData.focusEvents.length > 0) {
-      const focusScore = this.analyzeFocusEvents(behaviorData.focusEvents);
-      score = (score + focusScore) / 2;
+      signals.push(this.analyzeFocusEvents(behaviorData.focusEvents));
     }
 
-    return Math.min(100, Math.max(0, score));
+    if (signals.length === 0) return 50;
+    return Math.min(100, Math.max(0,
+      signals.reduce((sum, s) => sum + s, 0) / signals.length,
+    ));
   }
 
   private analyzeMouseMovements(movements: MouseMovement[]): number {
     if (movements.length < 2) return 30;
-
     let totalDistance = 0;
     let totalDuration = 0;
     let directionChanges = 0;
     let lastDirection = 0;
-
     for (let i = 1; i < movements.length; i++) {
       const prev = movements[i - 1];
       const curr = movements[i];
-      
-      const distance = Math.sqrt(
-        Math.pow(curr.x - prev.x, 2) + Math.pow(curr.y - prev.y, 2)
-      );
+      const distance = Math.sqrt(Math.pow(curr.x - prev.x, 2) + Math.pow(curr.y - prev.y, 2));
       totalDistance += distance;
       totalDuration += curr.duration;
-
-      // Calculate direction change
       const direction = Math.atan2(curr.y - prev.y, curr.x - prev.x);
-      if (i > 1 && Math.abs(direction - lastDirection) > Math.PI / 4) {
-        directionChanges++;
-      }
+      if (i > 1 && Math.abs(direction - lastDirection) > Math.PI / 4) directionChanges++;
       lastDirection = direction;
     }
-
-    // Human-like patterns
-    const avgSpeed = totalDistance / totalDuration;
+    const avgSpeed = totalDuration > 0 ? totalDistance / totalDuration : 0;
     const directionChangeRatio = directionChanges / movements.length;
-
-    // Perfect straight lines = bot-like
     const straightness = directionChangeRatio < 0.1 ? 20 : 80;
-    
-    // Too fast or too slow = bot-like
     const speedScore = avgSpeed < 0.1 || avgSpeed > 10 ? 30 : 70;
-
     return (straightness + speedScore) / 2;
   }
 
   private analyzeClickTiming(clicks: ClickTiming[]): number {
     if (clicks.length < 2) return 40;
-
-    const delays = clicks.slice(1).map((click, i) => 
-      click.timestamp - clicks[i].timestamp
-    );
-
+    const delays = clicks.slice(1).map((click, i) => click.timestamp - clicks[i].timestamp);
     const avgDelay = delays.reduce((a, b) => a + b, 0) / delays.length;
-    const variance = delays.reduce((sum, delay) => 
-      sum + Math.pow(delay - avgDelay, 2), 0
-    ) / delays.length;
-
-    // Consistent timing = bot-like
+    const variance = delays.reduce((sum, d) => sum + Math.pow(d - avgDelay, 2), 0) / delays.length;
     const consistencyScore = variance < 100 ? 30 : 70;
-    
-    // Too fast = bot-like
     const speedScore = avgDelay < 100 ? 25 : 75;
-
     return (consistencyScore + speedScore) / 2;
   }
 
   private analyzeTypingPattern(pattern: TypingPattern): number {
     const { keystrokes, averageSpeed, corrections } = pattern;
-
     if (keystrokes.length < 3) return 40;
-
-    // Too fast = bot-like
     const speedScore = averageSpeed < 50 || averageSpeed > 500 ? 30 : 70;
-    
-    // No corrections = bot-like
     const correctionScore = corrections === 0 ? 40 : 80;
-    
-    // Perfect intervals = bot-like
-    const delays = keystrokes.slice(1).map((key, i) => 
-      key.delay
-    );
-    const variance = delays.reduce((sum, delay) => 
-      sum + Math.pow(delay - averageSpeed, 2), 0
-    ) / delays.length;
-    const rhythmScore = variance < 50 ? 30 : 70;
-
-    return (speedScore + correctionScore + rhythmScore) / 3;
+    const delays = keystrokes.slice(1).map(k => k.delay);
+    const variance = delays.reduce((sum, d) => sum + Math.pow(d - averageSpeed, 2), 0) / delays.length;
+    const varianceScore = variance < 100 ? 30 : 70;
+    return (speedScore + correctionScore + varianceScore) / 3;
   }
 
   private analyzeFocusEvents(events: FocusEvent[]): number {
-    const focusCount = events.filter(e => e.type === 'focus').length;
-    const blurCount = events.filter(e => e.type === 'blur').length;
-
-    // Normal human behavior: some focus/blur events
-    if (focusCount === 0 && blurCount === 0) return 60;
-    if (focusCount > 0 && blurCount > 0) return 80;
-    return 50;
+    if (events.length < 2) return 50;
+    const blurEvents = events.filter(e => e.type === 'blur').length;
+    const focusEvents = events.filter(e => e.type === 'focus').length;
+    // Too many focus/blur = tab switching or automation
+    if (blurEvents > 3 || focusEvents > 3) return 30;
+    return 70;
   }
 
   private calculateIntelligenceScore(
@@ -346,30 +283,16 @@ export class VerificationService {
     isCorrect: boolean,
     timeTaken: number,
     behaviorScore: number,
-    riskScore: number
+    riskScore: number,
   ): number {
-    let score = 0;
-
-    // Base points for difficulty
-    score += challenge.points * 10;
-
-    // Correctness bonus
-    if (isCorrect) {
-      score += 30;
-    }
-
-    // Time bonus (faster = smarter)
-    const timeRatio = timeTaken / (challenge.timeLimit * 1000);
-    if (timeRatio < 0.5) score += 20;
-    else if (timeRatio < 0.8) score += 10;
-
-    // Behavior bonus
-    score += (behaviorScore / 100) * 15;
-
-    // Risk penalty
-    score -= (riskScore / 100) * 10;
-
-    return Math.min(100, Math.max(0, score));
+    if (!isCorrect) return Math.max(0, 20 - riskScore * 0.1);
+    const difficultyMultiplier = { easy: 1.0, medium: 1.3, hard: 1.6 }[challenge.difficulty];
+    const timeScore = this.calculateTimeScore(challenge, timeTaken);
+    const base = 50 * difficultyMultiplier;
+    const timeBonus = timeScore * 0.25;
+    const behaviorBonus = behaviorScore * 0.15;
+    const riskPenalty = riskScore * 0.1;
+    return Math.min(100, Math.max(0, base + timeBonus + behaviorBonus - riskPenalty));
   }
 
   private generateReasoning(
@@ -377,55 +300,32 @@ export class VerificationService {
     timeScore: number,
     behaviorScore: number,
     riskScore: number,
-    challenge: Challenge
+    challenge: Challenge,
   ): string[] {
     const reasoning: string[] = [];
-
     if (isCorrect) {
-      reasoning.push('Answer is correct');
+      reasoning.push(`Correct answer provided for ${challenge.difficulty} ${challenge.type} challenge`);
     } else {
-      reasoning.push('Answer is incorrect');
+      reasoning.push('Incorrect answer provided');
     }
-
-    if (timeScore > 80) {
-      reasoning.push('Excellent timing');
-    } else if (timeScore > 60) {
-      reasoning.push('Good timing');
-    } else if (timeScore < 30) {
-      reasoning.push('Unusual timing pattern');
-    }
-
-    if (behaviorScore > 80) {
-      reasoning.push('Natural human behavior');
-    } else if (behaviorScore > 60) {
-      reasoning.push('Mostly natural behavior');
-    } else if (behaviorScore < 40) {
-      reasoning.push('Suspicious behavior patterns');
-    }
-
-    if (riskScore > 70) {
-      reasoning.push('High risk factors detected');
-    } else if (riskScore > 40) {
-      reasoning.push('Moderate risk factors');
-    }
-
+    if (timeScore > 80) reasoning.push('Excellent response time');
+    else if (timeScore > 50) reasoning.push('Acceptable response time');
+    else reasoning.push('Slow or overtime response');
+    if (behaviorScore > 70) reasoning.push('Human-like interaction patterns detected');
+    else if (behaviorScore > 40) reasoning.push('Moderate behavior signals');
+    else reasoning.push('Suspicious interaction patterns');
+    if (riskScore > 70) reasoning.push('High-risk request profile');
+    else if (riskScore > 40) reasoning.push('Elevated risk indicators');
     return reasoning;
   }
 
   private generateAdaptiveIntelligenceScore(
-    intelligenceScore: number,
+    score: number,
     confidence: number,
-    riskLevel: 'low' | 'medium' | 'high'
-  ) {
-    // Score valid for 24 hours
+    riskLevel: string,
+  ): { score: number; confidence: number; riskLevel: string; expiresAt: Date } {
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + 24);
-
-    return {
-      score: intelligenceScore,
-      confidence: confidence,
-      riskLevel: riskLevel,
-      expiresAt: expiresAt,
-    };
+    return { score: Math.round(score), confidence: Math.round(confidence), riskLevel, expiresAt };
   }
 }
