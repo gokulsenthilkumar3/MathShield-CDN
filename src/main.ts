@@ -8,33 +8,38 @@ import helmet from 'helmet';
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
-  // Security middleware
-  app.use(helmet());
+  // Security middleware (disable CSP in dev so static pages load properly)
+  app.use(
+    helmet({
+      contentSecurityPolicy: process.env.NODE_ENV === 'production',
+    }),
+  );
 
-  // Global validation pipe
+  // Global validation pipe — allow unknown fields so partial payloads work
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
-      forbidNonWhitelisted: true,
+      forbidNonWhitelisted: false, // allow extra fields from clients
       transform: true,
     }),
   );
 
   // CORS configuration
   app.enableCors({
-    origin: true, // Configure based on your needs in production
+    origin: true,
     credentials: true,
   });
 
-  // Serve static files from public directory
-  app.useStaticAssets(join(__dirname, '..', 'public'));
+  // Serve static files — use process.cwd() so it works in both ts-node and compiled modes
+  const publicPath = join(process.cwd(), 'public');
+  app.useStaticAssets(publicPath);
+  console.log(`📁 Serving static files from: ${publicPath}`);
 
   const port = process.env.PORT || 3000;
   await app.listen(port);
-  console.log(`🚀 MathShield API running on port ${port}`);
+  console.log(`\n🚀 MathShield API running on port ${port}`);
   console.log(`📱 Demo:       http://localhost:${port}/demo.html`);
   console.log(`📊 Dashboard:  http://localhost:${port}/dashboard.html`);
-  console.log(`🔌 API Base:   http://localhost:${port}/api`);
-
+  console.log(`🔌 API Base:   http://localhost:${port}/api\n`);
 }
 bootstrap();

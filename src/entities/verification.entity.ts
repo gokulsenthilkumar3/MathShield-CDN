@@ -36,7 +36,7 @@ export class VerificationEntity {
   @Column({ nullable: true })
   userAgent: string;
 
-  @Column({ type: 'jsonb', nullable: true })
+  @Column({ type: 'simple-json', nullable: true })
   behaviorData: any;
 
   @Column()

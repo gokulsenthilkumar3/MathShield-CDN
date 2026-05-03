@@ -19,18 +19,33 @@ import { ApiKeyGuard } from './common/guards/api-key.guard';
     }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        type: 'postgres',
-        host: configService.get('DB_HOST') || 'localhost',
-        port: parseInt(configService.get('DB_PORT')) || 5432,
-        username: configService.get('DB_USERNAME') || 'postgres',
-        password: configService.get('DB_PASSWORD') || 'password',
-        database: configService.get('DB_DATABASE') || 'verification_platform',
-        entities: [__dirname + '/**/*.entity{.ts,.js}'],
-        autoLoadEntities: true,
-        synchronize: true, // Set to false in production — use migrations
-        logging: false,
-      }),
+      useFactory: (configService: ConfigService) => {
+        const dbType = configService.get('DB_TYPE') || 'sqlite';
+        
+        if (dbType === 'sqlite') {
+          return {
+            type: 'sqlite',
+            database: configService.get('DB_NAME') || 'mathshield.sqlite',
+            entities: [__dirname + '/**/*.entity{.ts,.js}'],
+            autoLoadEntities: true,
+            synchronize: true,
+            logging: false,
+          };
+        }
+
+        return {
+          type: 'postgres',
+          host: configService.get('DB_HOST') || 'localhost',
+          port: parseInt(configService.get('DB_PORT')) || 5432,
+          username: configService.get('DB_USERNAME') || 'postgres',
+          password: configService.get('DB_PASSWORD') || 'password',
+          database: configService.get('DB_DATABASE') || 'verification_platform',
+          entities: [__dirname + '/**/*.entity{.ts,.js}'],
+          autoLoadEntities: true,
+          synchronize: true, // Set to false in production — use migrations
+          logging: false,
+        };
+      },
       inject: [ConfigService],
     }),
     CacheModule.register({

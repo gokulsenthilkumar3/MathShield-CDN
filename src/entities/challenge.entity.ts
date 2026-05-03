@@ -18,7 +18,7 @@ export class ChallengeEntity {
   @Column()
   difficulty: string;
 
-  @Column({ type: 'jsonb', nullable: true })
+  @Column({ type: 'simple-json', nullable: true })
   options: string[];
 
   @Column()
