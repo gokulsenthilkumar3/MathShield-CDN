@@ -2,35 +2,56 @@ import { Injectable, Inject } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
+import { TokenService } from '../token/token.service';
+import {
+  generatePatternChallenge,
+  generateSpatialChallenge,
+  generateSemanticChallenge,
+  generateAnalogyChallenge,
+  generateCompletionChallenge,
+  AIResistantChallenge,
+  AIResistantChallengeType,
+} from './ai-resistant-challenges';
 
 export interface Challenge {
   id: string;
-  type: 'arithmetic' | 'algebra' | 'logic' | 'sequence';
+  type: 'arithmetic' | 'algebra' | 'logic' | 'sequence' | AIResistantChallengeType;
   question: string;
   answer: string | number;
   difficulty: 'easy' | 'medium' | 'hard';
   options?: string[];
   timeLimit: number; // in seconds
   points: number;
+  signature?: string; // HMAC signature for integrity
+  explanation?: string; // Educational explanation
 }
 
 export interface ChallengeRequest {
   difficulty?: 'easy' | 'medium' | 'hard';
-  type?: 'arithmetic' | 'algebra' | 'logic' | 'sequence';
+  type?: 'arithmetic' | 'algebra' | 'logic' | 'sequence' | AIResistantChallengeType | 'ai-resistant';
   riskScore?: number;
+  useAIResistant?: boolean; // Flag to prefer AI-resistant challenges
 }
 
 @Injectable()
 export class ChallengeService {
-  constructor(@Inject(CACHE_MANAGER) private cacheManager: Cache) {}
+  constructor(
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    private readonly tokenService: TokenService,
+  ) {}
 
   async generateChallenge(request: ChallengeRequest = {}): Promise<Challenge> {
     const {
       difficulty = this.getDifficultyByRisk(request.riskScore),
-      type = this.getRandomType(),
+      type = request.useAIResistant ? 'ai-resistant' : (request.type || this.getRandomType()),
+      useAIResistant = false,
     } = request;
 
-    const challenge = this.createChallengeByType(type, difficulty);
+    // For high risk scores, prefer AI-resistant challenges
+    const preferAIResistant = request.riskScore && request.riskScore > 50;
+    const finalUseAIResistant = useAIResistant || preferAIResistant;
+
+    const challenge = this.createChallengeByType(type, difficulty, finalUseAIResistant);
     
     // Cache challenge for 10 minutes (600 seconds)
     await this.cacheManager.set(`challenge:${challenge.id}`, challenge, 600000);
@@ -54,29 +75,81 @@ export class ChallengeService {
     return 'hard';
   }
 
-  private getRandomType(): 'arithmetic' | 'algebra' | 'logic' | 'sequence' {
-    const types: ('arithmetic' | 'algebra' | 'logic' | 'sequence')[] = ['arithmetic', 'algebra', 'logic', 'sequence'];
+  private getRandomType(): 'arithmetic' | 'algebra' | 'logic' | 'sequence' | AIResistantChallengeType {
+    const types: ('arithmetic' | 'algebra' | 'logic' | 'sequence' | AIResistantChallengeType)[] = [
+      'arithmetic', 'algebra', 'logic', 'sequence',
+      'pattern', 'spatial', 'semantic', 'analogy', 'completion'
+    ];
     return types[Math.floor(Math.random() * types.length)];
   }
 
   private createChallengeByType(
-    type: 'arithmetic' | 'algebra' | 'logic' | 'sequence',
-    difficulty: 'easy' | 'medium' | 'hard'
+    type: 'arithmetic' | 'algebra' | 'logic' | 'sequence' | AIResistantChallengeType | 'ai-resistant',
+    difficulty: 'easy' | 'medium' | 'hard',
+    useAIResistant?: boolean
   ): Challenge {
-    const id = uuidv4();
+    // If AI-resistant is requested, pick a random AI-resistant type
+    if (type === 'ai-resistant' || useAIResistant) {
+      const aiTypes: AIResistantChallengeType[] = ['pattern', 'spatial', 'semantic', 'analogy', 'completion'];
+      type = aiTypes[Math.floor(Math.random() * aiTypes.length)];
+    }
+
+    let challenge: Challenge;
     
     switch (type) {
       case 'arithmetic':
-        return this.createArithmeticChallenge(id, difficulty);
+        challenge = this.createArithmeticChallenge(uuidv4(), difficulty);
+        break;
       case 'algebra':
-        return this.createAlgebraChallenge(id, difficulty);
+        challenge = this.createAlgebraChallenge(uuidv4(), difficulty);
+        break;
       case 'logic':
-        return this.createLogicChallenge(id, difficulty);
+        challenge = this.createLogicChallenge(uuidv4(), difficulty);
+        break;
       case 'sequence':
-        return this.createSequenceChallenge(id, difficulty);
+        challenge = this.createSequenceChallenge(uuidv4(), difficulty);
+        break;
+      case 'pattern':
+        challenge = this.convertAIResistantToChallenge(generatePatternChallenge(difficulty));
+        break;
+      case 'spatial':
+        challenge = this.convertAIResistantToChallenge(generateSpatialChallenge(difficulty));
+        break;
+      case 'semantic':
+        challenge = this.convertAIResistantToChallenge(generateSemanticChallenge(difficulty));
+        break;
+      case 'analogy':
+        challenge = this.convertAIResistantToChallenge(generateAnalogyChallenge(difficulty));
+        break;
+      case 'completion':
+        challenge = this.convertAIResistantToChallenge(generateCompletionChallenge(difficulty));
+        break;
       default:
-        return this.createArithmeticChallenge(id, difficulty);
+        challenge = this.createArithmeticChallenge(uuidv4(), difficulty);
     }
+
+    // Add HMAC signature to prevent tampering
+    challenge.signature = this.tokenService.createChallengeSignature(
+      challenge.id,
+      challenge.type,
+      challenge.difficulty
+    );
+
+    return challenge;
+  }
+
+  private convertAIResistantToChallenge(aiChallenge: AIResistantChallenge): Challenge {
+    return {
+      id: aiChallenge.id,
+      type: aiChallenge.type,
+      question: aiChallenge.question,
+      answer: aiChallenge.answer,
+      difficulty: aiChallenge.difficulty,
+      options: aiChallenge.options,
+      timeLimit: aiChallenge.timeLimit,
+      points: aiChallenge.points,
+      explanation: aiChallenge.explanation,
+    };
   }
 
   private createArithmeticChallenge(id: string, difficulty: 'easy' | 'medium' | 'hard'): Challenge {

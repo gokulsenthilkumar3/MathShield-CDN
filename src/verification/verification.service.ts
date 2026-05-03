@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ChallengeService, Challenge } from '../challenge/challenge.service';
 import { RiskService, RiskScore } from '../risk/risk.service';
+import { TokenService, VerificationToken } from '../token/token.service';
 
 export interface VerificationRequest {
   challengeId: string;
@@ -66,6 +67,8 @@ export interface VerificationResult {
     riskLevel: string;
     expiresAt: Date;
   };
+  token?: VerificationToken; // JWT token for backend verification
+  explanation?: string; // Educational explanation of the answer
 }
 
 @Injectable()
@@ -73,6 +76,7 @@ export class VerificationService {
   constructor(
     private readonly challengeService: ChallengeService,
     private readonly riskService: RiskService,
+    private readonly tokenService: TokenService,
   ) {}
 
   async verifyResponse(request: VerificationRequest): Promise<VerificationResult> {
@@ -80,6 +84,19 @@ export class VerificationService {
     const challenge = await this.challengeService.getChallengeById(request.challengeId);
     if (!challenge) {
       throw new Error('Challenge not found or expired');
+    }
+
+    // Verify challenge signature to prevent tampering
+    if (challenge.signature) {
+      const isValidSignature = this.tokenService.verifyChallengeSignature(
+        challenge.id,
+        challenge.type,
+        challenge.difficulty,
+        challenge.signature
+      );
+      if (!isValidSignature) {
+        throw new UnauthorizedException('Challenge signature verification failed - possible tampering detected');
+      }
     }
 
     // Calculate base correctness
@@ -137,6 +154,19 @@ export class VerificationService {
     // Clean up challenge
     await this.challengeService.removeChallenge(request.challengeId);
 
+    // Generate JWT token for successful verifications
+    let token: VerificationToken | undefined;
+    if (confidence > 50) {
+      token = await this.tokenService.generateVerificationToken(
+        challenge.id,
+        challenge.type,
+        challenge.difficulty,
+        Math.round(intelligenceScore),
+        Math.round(confidence),
+        riskLevel
+      );
+    }
+
     return {
       success: confidence > 50, // Threshold for passing
       confidence: Math.round(confidence),
@@ -150,6 +180,8 @@ export class VerificationService {
       },
       reasoning,
       adaptiveIntelligenceScore: adaptiveScore,
+      token,
+      explanation: challenge.explanation,
     };
   }
 
